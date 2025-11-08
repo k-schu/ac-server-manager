@@ -1,6 +1,8 @@
 """Command-line interface for AC Server Manager."""
 
 import logging
+import socket
+import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
@@ -15,6 +17,134 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+
+def check_tcp_port(host: str, port: int, timeout: int = 5) -> bool:
+    """Check if a TCP port is open and accepting connections.
+
+    Args:
+        host: Host to check
+        port: Port to check
+        timeout: Connection timeout in seconds
+
+    Returns:
+        True if port is open, False otherwise
+    """
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        result = sock.connect_ex((host, port))
+        sock.close()
+        return result == 0
+    except Exception as e:
+        logger.debug(f"TCP port check failed for {host}:{port} - {e}")
+        return False
+
+
+def check_udp_port(host: str, port: int, timeout: int = 5) -> bool:
+    """Check if a UDP port is reachable.
+
+    Note: UDP is connectionless, so this check sends a packet and waits for a response.
+    A lack of ICMP port unreachable error is considered success.
+
+    Args:
+        host: Host to check
+        port: Port to check
+        timeout: Timeout in seconds
+
+    Returns:
+        True if port appears to be open, False otherwise
+    """
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(timeout)
+        # Send a test packet
+        sock.sendto(b"\x00", (host, port))
+        # Try to receive - if we get ICMP port unreachable, port is closed
+        try:
+            sock.recvfrom(1024)
+            sock.close()
+            return True
+        except socket.timeout:
+            # Timeout means no ICMP error, which suggests port might be open
+            sock.close()
+            return True
+        except Exception:
+            sock.close()
+            return False
+    except Exception as e:
+        logger.debug(f"UDP port check failed for {host}:{port} - {e}")
+        return False
+
+
+def check_host_reachable(host: str, timeout: int = 5) -> bool:
+    """Check if host is reachable using ping.
+
+    Args:
+        host: Host to check
+        timeout: Timeout in seconds
+
+    Returns:
+        True if host is reachable, False otherwise
+    """
+    try:
+        # Use ping command (works on Linux/Mac/Windows)
+        result = subprocess.run(
+            ["ping", "-c", "1", "-W", str(timeout), host],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout + 1,
+        )
+        return result.returncode == 0
+    except Exception as e:
+        logger.debug(f"Ping check failed for {host} - {e}")
+        return False
+
+
+def check_url_accessible(url: str, timeout: int = 10) -> tuple[bool, Optional[str]]:
+    """Check if a URL is accessible using curl.
+
+    Args:
+        url: URL to check
+        timeout: Timeout in seconds
+
+    Returns:
+        Tuple of (success, error_message)
+    """
+    try:
+        result = subprocess.run(
+            [
+                "curl",
+                "-L",
+                "-s",
+                "-o",
+                "/dev/null",
+                "-w",
+                "%{http_code}",
+                "--max-time",
+                str(timeout),
+                url,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout + 1,
+            text=True,
+        )
+        http_code = result.stdout.strip()
+
+        # Consider 2xx and 3xx as success
+        if http_code.startswith("2") or http_code.startswith("3"):
+            return True, None
+        else:
+            return False, f"HTTP {http_code}"
+    except subprocess.TimeoutExpired:
+        return False, "Connection timeout"
+    except FileNotFoundError:
+        # curl not available, skip this check
+        logger.debug("curl not available, skipping URL check")
+        return True, "Skipped (curl not available)"
+    except Exception as e:
+        return False, str(e)
 
 
 @click.group()
@@ -37,9 +167,16 @@ def main() -> None:
 @click.option("--instance-name", default="ac-server-instance", help="Instance name tag")
 @click.option("--key-name", help="EC2 key pair name for SSH access")
 @click.option("--iam-instance-profile", help="Existing IAM instance profile name/ARN to use")
-@click.option("--create-iam/--no-create-iam", default=False, help="Automatically create IAM role and instance profile for S3 access (default: off)")
+@click.option(
+    "--create-iam/--no-create-iam",
+    default=False,
+    help="Automatically create IAM role and instance profile for S3 access (default: off)",
+)
 @click.option("--iam-role-name", help="IAM role name to create (used with --create-iam)")
-@click.option("--iam-instance-profile-name", help="IAM instance profile name to create (used with --create-iam)")
+@click.option(
+    "--iam-instance-profile-name",
+    help="IAM instance profile name to create (used with --create-iam)",
+)
 def deploy(
     pack_file: Path,
     region: str,
@@ -169,9 +306,16 @@ def terminate(instance_id: Optional[str], instance_name: str, region: str) -> No
 @click.option("--instance-name", default="ac-server-instance", help="Instance name tag")
 @click.option("--key-name", help="EC2 key pair name for SSH access")
 @click.option("--iam-instance-profile", help="Existing IAM instance profile name/ARN to use")
-@click.option("--create-iam/--no-create-iam", default=False, help="Automatically create IAM role and instance profile for S3 access (default: off)")
+@click.option(
+    "--create-iam/--no-create-iam",
+    default=False,
+    help="Automatically create IAM role and instance profile for S3 access (default: off)",
+)
 @click.option("--iam-role-name", help="IAM role name to create (used with --create-iam)")
-@click.option("--iam-instance-profile-name", help="IAM instance profile name to create (used with --create-iam)")
+@click.option(
+    "--iam-instance-profile-name",
+    help="IAM instance profile name to create (used with --create-iam)",
+)
 def redeploy(
     pack_file: Path,
     instance_id: Optional[str],
@@ -231,7 +375,7 @@ def status(instance_id: Optional[str], instance_name: str, region: str) -> None:
         ac-server-manager status
         ac-server-manager status --instance-id i-1234567890abcdef0
     """
-    from .config import AC_SERVER_TCP_PORT
+    from .config import AC_SERVER_HTTP_PORT, AC_SERVER_TCP_PORT, AC_SERVER_UDP_PORT
 
     config = ServerConfig(aws_region=region, instance_name=instance_name)
     deployer = Deployer(config)
@@ -259,13 +403,76 @@ def status(instance_id: Optional[str], instance_name: str, region: str) -> None:
         click.echo(f"\n{click.style('Connection Information:', fg='cyan', bold=True)}")
         click.echo(f"Public IP: {public_ip}")
         click.echo(f"Game Port: {AC_SERVER_TCP_PORT} (UDP/TCP)")
+        click.echo(f"HTTP Port: {AC_SERVER_HTTP_PORT} (TCP)")
         click.echo(f"Direct Connect: {public_ip}:{AC_SERVER_TCP_PORT}")
 
-        # Generate acstuff.ru link
-        acstuff_url = f"https://acstuff.ru/s/q:race/online/join?ip={public_ip}:{AC_SERVER_TCP_PORT}"
+        # Generate correct acstuff.ru link
+        acstuff_url = f"https://acstuff.ru/s/q:race/online/join?ip={public_ip}&httpPort={AC_SERVER_HTTP_PORT}&password="
         click.echo(f"\n{click.style('Join Server:', fg='cyan', bold=True)}")
         click.echo(f"acstuff.ru link: {acstuff_url}")
         click.echo("\nOpen this link in your browser to join the server via Content Manager")
+
+        # Perform connectivity checks
+        click.echo(f"\n{click.style('Connectivity Checks:', fg='cyan', bold=True)}")
+
+        # Check if host is reachable
+        click.echo("Checking host reachability...")
+        if check_host_reachable(public_ip):
+            click.echo(click.style("  ✓ Host is reachable (ping)", fg="green"))
+        else:
+            click.echo(click.style("  ✗ Host is not reachable (ping)", fg="yellow"))
+            click.echo("    Note: Some hosts may block ICMP ping")
+
+        # Check TCP port (game port)
+        click.echo(f"Checking TCP port {AC_SERVER_TCP_PORT}...")
+        if check_tcp_port(public_ip, AC_SERVER_TCP_PORT):
+            click.echo(click.style(f"  ✓ TCP port {AC_SERVER_TCP_PORT} is open", fg="green"))
+        else:
+            click.echo(
+                click.style(f"  ✗ TCP port {AC_SERVER_TCP_PORT} is not accessible", fg="red")
+            )
+            click.echo("    The server may still be starting up or there may be a firewall issue")
+
+        # Check UDP port (game port)
+        click.echo(f"Checking UDP port {AC_SERVER_UDP_PORT}...")
+        if check_udp_port(public_ip, AC_SERVER_UDP_PORT):
+            click.echo(
+                click.style(f"  ✓ UDP port {AC_SERVER_UDP_PORT} appears to be open", fg="green")
+            )
+        else:
+            click.echo(
+                click.style(f"  ✗ UDP port {AC_SERVER_UDP_PORT} is not accessible", fg="red")
+            )
+            click.echo("    Note: UDP checks are less reliable than TCP")
+
+        # Check HTTP port
+        click.echo(f"Checking TCP port {AC_SERVER_HTTP_PORT} (HTTP)...")
+        if check_tcp_port(public_ip, AC_SERVER_HTTP_PORT):
+            click.echo(
+                click.style(f"  ✓ TCP port {AC_SERVER_HTTP_PORT} (HTTP) is open", fg="green")
+            )
+        else:
+            click.echo(
+                click.style(
+                    f"  ✗ TCP port {AC_SERVER_HTTP_PORT} (HTTP) is not accessible", fg="red"
+                )
+            )
+            click.echo("    The HTTP port is required for Content Manager connection")
+
+        # Check acstuff.ru URL
+        click.echo("Checking acstuff.ru join URL...")
+        url_ok, url_error = check_url_accessible(acstuff_url)
+        if url_ok:
+            click.echo(click.style("  ✓ acstuff.ru join URL is accessible", fg="green"))
+        else:
+            if url_error == "Skipped (curl not available)":
+                click.echo(click.style(f"  ⚠ {url_error}", fg="yellow"))
+            else:
+                click.echo(
+                    click.style(f"  ✗ acstuff.ru join URL check failed: {url_error}", fg="yellow")
+                )
+                click.echo("    Note: This may not indicate a server problem")
+
     elif details["state"] == "running":
         click.echo(
             click.style("\n⚠ Instance is running but no public IP assigned yet", fg="yellow")
