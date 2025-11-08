@@ -235,7 +235,7 @@ def status(instance_id: Optional[str], instance_name: str, region: str) -> None:
         click.echo(f"Direct Connect: {public_ip}:{AC_SERVER_TCP_PORT}")
 
         # Generate acstuff.ru link
-        acstuff_url = f"https://acstuff.ru/s/q:race@{public_ip}:{AC_SERVER_TCP_PORT}"
+        acstuff_url = f"https://acstuff.ru/s/q:race/online/join?ip={public_ip}:{AC_SERVER_TCP_PORT}"
         click.echo(f"\n{click.style('Join Server:', fg='cyan', bold=True)}")
         click.echo(f"acstuff.ru link: {acstuff_url}")
         click.echo("\nOpen this link in your browser to join the server via Content Manager")
