@@ -109,7 +109,15 @@ class Deployer:
             logger.info(f"Instance ID: {instance_id}")
             logger.info(f"Public IP: {public_ip}")
             logger.info(f"Server will be available at {public_ip}:9600 (UDP/TCP)")
-            logger.info("Note: Server initialization may take a few minutes")
+            logger.info("")
+            logger.info("Post-deployment validation is running on the instance...")
+            logger.info("This may take 2-3 minutes. To check deployment status:")
+            logger.info(f"  1. SSH to instance: ssh -i <key>.pem ubuntu@{public_ip}")
+            logger.info("  2. Check status: cat /opt/acserver/deploy-status.json")
+            logger.info("  3. Check logs: cat /var/log/acserver-deploy.log")
+            logger.info("  4. Check service: systemctl status acserver")
+            logger.info("")
+            logger.info("If validation fails, check the logs above for troubleshooting.")
 
         return instance_id
 
