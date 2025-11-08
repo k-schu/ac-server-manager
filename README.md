@@ -80,6 +80,55 @@ export AWS_SECRET_ACCESS_KEY=your_secret_key
 export AWS_DEFAULT_REGION=us-east-1
 ```
 
+### S3 Access for EC2 Instances
+
+**Important**: The EC2 instance needs permission to download the server pack from S3. The user-data script runs `aws s3 cp` to retrieve the server pack during initialization. Without proper permissions, this step will fail and the deployment will not complete successfully.
+
+You have two options to grant S3 access:
+
+#### Option 1: IAM Instance Profile (Recommended)
+
+Attach an IAM instance profile to the EC2 instance with a role that has `s3:GetObject` permission on your server pack bucket. This is the secure, recommended approach.
+
+1. Create an IAM role with the following policy (or use an existing role):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject"
+      ],
+      "Resource": "arn:aws:s3:::ac-server-packs/*"
+    }
+  ]
+}
+```
+
+2. Create an instance profile and attach the role (if not already created)
+
+3. Use the `--iam-instance-profile` flag when deploying:
+
+```bash
+ac-server-manager deploy server-pack.tar.gz --iam-instance-profile my-instance-profile-name
+```
+
+Or use an ARN:
+
+```bash
+ac-server-manager deploy server-pack.tar.gz --iam-instance-profile arn:aws:iam::123456789012:instance-profile/my-profile
+```
+
+**Note**: If you don't provide an IAM instance profile, the CLI will display a warning that the deployment may fail.
+
+#### Option 2: Public S3 Object (Not Recommended for Production)
+
+Alternatively, you can make the S3 object publicly accessible. This is simpler but **not recommended for production** as it exposes your server pack publicly.
+
+To make objects public, you would need to configure your S3 bucket policy or object ACLs accordingly.
+
 ## Usage
 
 ### Creating a Server Pack
@@ -106,12 +155,15 @@ ac-server-manager deploy server-pack.tar.gz \
   --instance-type t3.small \
   --bucket my-ac-servers \
   --instance-name my-race-server \
-  --key-name my-ssh-key
+  --key-name my-ssh-key \
+  --iam-instance-profile my-instance-profile
 ```
 
 The server will be deployed and available at the public IP address shown in the output. The server is accessible on:
 - UDP/TCP Port 9600 (game traffic)
 - TCP Port 8081 (HTTP API)
+
+**Note**: Always use `--iam-instance-profile` to ensure the instance can download the server pack from S3. Without it, the deployment may fail during initialization.
 
 ### Managing Your Server
 
@@ -262,6 +314,7 @@ pytest tests/test_deployer.py::test_deploy_success
 - Check you have necessary AWS permissions
 - Ensure the pack file is a valid Content Manager export
 - Check AWS service limits haven't been reached
+- **Check S3 access**: If the deployment fails during initialization, the instance may not have permission to download the server pack from S3. Use `--iam-instance-profile` to attach a role with s3:GetObject permission, or make the S3 object publicly accessible (not recommended).
 - **Check validation logs**: SSH into the instance and review `/var/log/acserver-deployment.log` for detailed validation results
 - **Check systemd status**: Run `systemctl status acserver` to see service status
 - **Review server logs**: Check `/opt/acserver/log/log.txt` for AC server errors

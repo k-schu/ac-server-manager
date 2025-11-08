@@ -36,6 +36,7 @@ def main() -> None:
 @click.option("--bucket", default="ac-server-packs", help="S3 bucket name")
 @click.option("--instance-name", default="ac-server-instance", help="Instance name tag")
 @click.option("--key-name", help="EC2 key pair name for SSH access")
+@click.option("--iam-instance-profile", help="IAM instance profile name or ARN for S3 access")
 def deploy(
     pack_file: Path,
     region: str,
@@ -43,6 +44,7 @@ def deploy(
     bucket: str,
     instance_name: str,
     key_name: Optional[str],
+    iam_instance_profile: Optional[str],
 ) -> None:
     """Deploy AC server from a Content Manager pack file.
 
@@ -58,9 +60,21 @@ def deploy(
         s3_bucket_name=bucket,
         instance_name=instance_name,
         key_name=key_name,
+        iam_instance_profile=iam_instance_profile,
     )
 
     deployer = Deployer(config)
+
+    if not iam_instance_profile:
+        click.echo(
+            click.style(
+                "⚠ WARNING: No IAM instance profile provided. The instance will not have "
+                "permission to download the server pack from S3. The deployment may fail.\n"
+                "Use --iam-instance-profile to attach an IAM role with s3:GetObject permission, "
+                "or ensure the S3 object is publicly accessible.",
+                fg="yellow",
+            )
+        )
 
     click.echo(f"Deploying AC server from {pack_file.name}...")
     instance_id = deployer.deploy(pack_file)
@@ -154,6 +168,7 @@ def terminate(instance_id: Optional[str], instance_name: str, region: str) -> No
 @click.option("--bucket", default="ac-server-packs", help="S3 bucket name")
 @click.option("--instance-name", default="ac-server-instance", help="Instance name tag")
 @click.option("--key-name", help="EC2 key pair name for SSH access")
+@click.option("--iam-instance-profile", help="IAM instance profile name or ARN for S3 access")
 def redeploy(
     pack_file: Path,
     instance_id: Optional[str],
@@ -162,6 +177,7 @@ def redeploy(
     bucket: str,
     instance_name: str,
     key_name: Optional[str],
+    iam_instance_profile: Optional[str],
 ) -> None:
     """Terminate existing instance and redeploy with new pack.
 
@@ -176,9 +192,21 @@ def redeploy(
         s3_bucket_name=bucket,
         instance_name=instance_name,
         key_name=key_name,
+        iam_instance_profile=iam_instance_profile,
     )
 
     deployer = Deployer(config)
+
+    if not iam_instance_profile:
+        click.echo(
+            click.style(
+                "⚠ WARNING: No IAM instance profile provided. The instance will not have "
+                "permission to download the server pack from S3. The deployment may fail.\n"
+                "Use --iam-instance-profile to attach an IAM role with s3:GetObject permission, "
+                "or ensure the S3 object is publicly accessible.",
+                fg="yellow",
+            )
+        )
 
     click.echo(f"Redeploying AC server with {pack_file.name}...")
     new_instance_id = deployer.redeploy(pack_file, instance_id)

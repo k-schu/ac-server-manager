@@ -13,6 +13,7 @@ class ServerConfig:
     instance_type: str = "t3.small"  # Suitable for 2-8 players, cost-effective
     key_name: Optional[str] = None
     security_group_name: str = "ac-server-sg"
+    iam_instance_profile: Optional[str] = None
 
     # S3 Configuration
     s3_bucket_name: str = "ac-server-packs"

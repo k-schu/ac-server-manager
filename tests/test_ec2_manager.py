@@ -143,6 +143,94 @@ def test_launch_instance_with_key(ec2_manager: EC2Manager) -> None:
     assert call_args["KeyName"] == "my-key"
 
 
+def test_launch_instance_with_iam_profile_name(ec2_manager: EC2Manager) -> None:
+    """Test instance launch with IAM instance profile name."""
+    ec2_manager.ec2_client.run_instances = MagicMock(
+        return_value={"Instances": [{"InstanceId": "i-12345"}]}
+    )
+    ec2_manager.ec2_client.get_waiter = MagicMock()
+
+    result = ec2_manager.launch_instance(
+        ami_id="ami-12345",
+        instance_type="t3.small",
+        security_group_id="sg-12345",
+        user_data="#!/bin/bash",
+        instance_name="test-instance",
+        iam_instance_profile="my-instance-profile",
+    )
+
+    assert result == "i-12345"
+    call_args = ec2_manager.ec2_client.run_instances.call_args[1]
+    assert "IamInstanceProfile" in call_args
+    assert call_args["IamInstanceProfile"] == {"Name": "my-instance-profile"}
+
+
+def test_launch_instance_with_iam_profile_arn(ec2_manager: EC2Manager) -> None:
+    """Test instance launch with IAM instance profile ARN."""
+    ec2_manager.ec2_client.run_instances = MagicMock(
+        return_value={"Instances": [{"InstanceId": "i-12345"}]}
+    )
+    ec2_manager.ec2_client.get_waiter = MagicMock()
+
+    profile_arn = "arn:aws:iam::123456789012:instance-profile/my-profile"
+    result = ec2_manager.launch_instance(
+        ami_id="ami-12345",
+        instance_type="t3.small",
+        security_group_id="sg-12345",
+        user_data="#!/bin/bash",
+        instance_name="test-instance",
+        iam_instance_profile=profile_arn,
+    )
+
+    assert result == "i-12345"
+    call_args = ec2_manager.ec2_client.run_instances.call_args[1]
+    assert "IamInstanceProfile" in call_args
+    assert call_args["IamInstanceProfile"] == {"Arn": profile_arn}
+
+
+def test_launch_instance_with_iam_profile_arn_role(ec2_manager: EC2Manager) -> None:
+    """Test instance launch with IAM profile containing :role/."""
+    ec2_manager.ec2_client.run_instances = MagicMock(
+        return_value={"Instances": [{"InstanceId": "i-12345"}]}
+    )
+    ec2_manager.ec2_client.get_waiter = MagicMock()
+
+    profile_arn = "arn:aws:iam::123456789012:role/my-role"
+    result = ec2_manager.launch_instance(
+        ami_id="ami-12345",
+        instance_type="t3.small",
+        security_group_id="sg-12345",
+        user_data="#!/bin/bash",
+        instance_name="test-instance",
+        iam_instance_profile=profile_arn,
+    )
+
+    assert result == "i-12345"
+    call_args = ec2_manager.ec2_client.run_instances.call_args[1]
+    assert "IamInstanceProfile" in call_args
+    assert call_args["IamInstanceProfile"] == {"Arn": profile_arn}
+
+
+def test_launch_instance_without_iam_profile(ec2_manager: EC2Manager) -> None:
+    """Test instance launch without IAM instance profile."""
+    ec2_manager.ec2_client.run_instances = MagicMock(
+        return_value={"Instances": [{"InstanceId": "i-12345"}]}
+    )
+    ec2_manager.ec2_client.get_waiter = MagicMock()
+
+    result = ec2_manager.launch_instance(
+        ami_id="ami-12345",
+        instance_type="t3.small",
+        security_group_id="sg-12345",
+        user_data="#!/bin/bash",
+        instance_name="test-instance",
+    )
+
+    assert result == "i-12345"
+    call_args = ec2_manager.ec2_client.run_instances.call_args[1]
+    assert "IamInstanceProfile" not in call_args
+
+
 def test_get_instance_public_ip(ec2_manager: EC2Manager) -> None:
     """Test getting instance public IP."""
     ec2_manager.ec2_client.describe_instances = MagicMock(

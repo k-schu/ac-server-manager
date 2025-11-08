@@ -16,6 +16,7 @@ def test_server_config_defaults() -> None:
     assert config.instance_type == "t3.small"
     assert config.key_name is None
     assert config.security_group_name == "ac-server-sg"
+    assert config.iam_instance_profile is None
     assert config.s3_bucket_name == "ac-server-packs"
     assert config.pack_file_key is None
     assert config.server_name == "AC Server"
@@ -29,6 +30,7 @@ def test_server_config_custom_values() -> None:
         aws_region="us-west-2",
         instance_type="t3.medium",
         key_name="my-key",
+        iam_instance_profile="my-profile",
         s3_bucket_name="my-bucket",
         max_players=16,
     )
@@ -36,6 +38,7 @@ def test_server_config_custom_values() -> None:
     assert config.aws_region == "us-west-2"
     assert config.instance_type == "t3.medium"
     assert config.key_name == "my-key"
+    assert config.iam_instance_profile == "my-profile"
     assert config.s3_bucket_name == "my-bucket"
     assert config.max_players == 16
 
@@ -46,6 +49,7 @@ def test_server_config_from_dict() -> None:
         "aws_region": "eu-west-1",
         "instance_type": "t3.large",
         "key_name": "test-key",
+        "iam_instance_profile": "test-profile",
         "max_players": 12,
         "extra_field": "should be ignored",
     }
@@ -55,6 +59,7 @@ def test_server_config_from_dict() -> None:
     assert config.aws_region == "eu-west-1"
     assert config.instance_type == "t3.large"
     assert config.key_name == "test-key"
+    assert config.iam_instance_profile == "test-profile"
     assert config.max_players == 12
     assert not hasattr(config, "extra_field")
 

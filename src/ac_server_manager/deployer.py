@@ -71,6 +71,7 @@ class Deployer:
             user_data=user_data,
             instance_name=self.config.instance_name,
             key_name=self.config.key_name,
+            iam_instance_profile=self.config.iam_instance_profile,
         )
 
         if not instance_id:
