@@ -1,12 +1,17 @@
 """Unit tests for config module."""
 
-from ac_server_manager.config import ServerConfig, AC_SERVER_HTTP_PORT, AC_SERVER_TCP_PORT, AC_SERVER_UDP_PORT
+from ac_server_manager.config import (
+    ServerConfig,
+    AC_SERVER_HTTP_PORT,
+    AC_SERVER_TCP_PORT,
+    AC_SERVER_UDP_PORT,
+)
 
 
 def test_server_config_defaults() -> None:
     """Test ServerConfig default values."""
     config = ServerConfig()
-    
+
     assert config.aws_region == "us-east-1"
     assert config.instance_type == "t3.small"
     assert config.key_name is None
@@ -25,9 +30,9 @@ def test_server_config_custom_values() -> None:
         instance_type="t3.medium",
         key_name="my-key",
         s3_bucket_name="my-bucket",
-        max_players=16
+        max_players=16,
     )
-    
+
     assert config.aws_region == "us-west-2"
     assert config.instance_type == "t3.medium"
     assert config.key_name == "my-key"
@@ -42,11 +47,11 @@ def test_server_config_from_dict() -> None:
         "instance_type": "t3.large",
         "key_name": "test-key",
         "max_players": 12,
-        "extra_field": "should be ignored"
+        "extra_field": "should be ignored",
     }
-    
+
     config = ServerConfig.from_dict(config_dict)
-    
+
     assert config.aws_region == "eu-west-1"
     assert config.instance_type == "t3.large"
     assert config.key_name == "test-key"

@@ -13,25 +13,25 @@ class ServerConfig:
     instance_type: str = "t3.small"  # Suitable for 2-8 players, cost-effective
     key_name: Optional[str] = None
     security_group_name: str = "ac-server-sg"
-    
+
     # S3 Configuration
     s3_bucket_name: str = "ac-server-packs"
     pack_file_key: Optional[str] = None
-    
+
     # Server Configuration
     server_name: str = "AC Server"
     max_players: int = 8
-    
+
     # Instance tags
     instance_name: str = "ac-server-instance"
-    
+
     @classmethod
     def from_dict(cls, config_dict: dict) -> "ServerConfig":
         """Create ServerConfig from dictionary.
-        
+
         Args:
             config_dict: Dictionary containing configuration values
-            
+
         Returns:
             ServerConfig instance
         """
