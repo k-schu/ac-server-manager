@@ -639,6 +639,61 @@ fi
             logger.error(f"Error terminating instance: {e}")
             return False
 
+    def terminate_instance_and_wait(self, instance_id: str, dry_run: bool = False) -> bool:
+        """Terminate an EC2 instance and wait for termination to complete.
+
+        Args:
+            instance_id: Instance ID to terminate
+            dry_run: If True, only log what would be done without actually terminating
+
+        Returns:
+            True if termination succeeded, False otherwise
+        """
+        try:
+            # Check if instance exists
+            try:
+                response = self.ec2_client.describe_instances(InstanceIds=[instance_id])
+                if not response["Reservations"]:
+                    logger.warning(f"Instance {instance_id} not found")
+                    return True  # Already gone
+
+                instance_state = response["Reservations"][0]["Instances"][0]["State"]["Name"]
+                if instance_state == "terminated":
+                    logger.info(f"Instance {instance_id} is already terminated")
+                    return True
+
+            except ClientError as e:
+                if e.response["Error"]["Code"] == "InvalidInstanceID.NotFound":
+                    logger.info(f"Instance {instance_id} not found, already terminated")
+                    return True
+                raise
+
+            if dry_run:
+                logger.info(f"[DRY RUN] Would terminate instance: {instance_id}")
+                return True
+
+            # Terminate the instance
+            logger.info(f"Terminating instance {instance_id}...")
+            self.ec2_client.terminate_instances(InstanceIds=[instance_id])
+            logger.info(f"Termination initiated for instance {instance_id}")
+
+            # Wait for instance to terminate
+            logger.info(f"Waiting for instance {instance_id} to terminate...")
+            waiter = self.ec2_client.get_waiter("instance_terminated")
+            waiter.wait(
+                InstanceIds=[instance_id],
+                WaiterConfig={
+                    "Delay": 15,  # Check every 15 seconds
+                    "MaxAttempts": 40,  # Wait up to 10 minutes
+                },
+            )
+            logger.info(f"Instance {instance_id} has been terminated")
+            return True
+
+        except ClientError as e:
+            logger.error(f"Error terminating instance {instance_id}: {e}")
+            return False
+
     def find_instances_by_name(self, instance_name: str) -> list[str]:
         """Find instances by name tag.
 

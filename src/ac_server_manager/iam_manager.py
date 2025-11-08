@@ -2,7 +2,6 @@
 
 import json
 import logging
-from typing import Optional
 
 import boto3
 from botocore.exceptions import ClientError
@@ -59,9 +58,7 @@ class IAMManager:
             # Step 4: Attach inline policy for S3 access
             self._attach_s3_policy(role_name, bucket)
 
-            logger.info(
-                f"Successfully configured IAM role and profile for S3 bucket '{bucket}'"
-            )
+            logger.info(f"Successfully configured IAM role and profile for S3 bucket '{bucket}'")
             return instance_profile_name
 
         except ClientError as e:
@@ -133,9 +130,7 @@ class IAMManager:
             if e.response["Error"]["Code"] == "NoSuchEntity":
                 # Instance profile doesn't exist, create it
                 logger.info(f"Creating instance profile '{profile_name}'")
-                response = self.iam_client.create_instance_profile(
-                    InstanceProfileName=profile_name
-                )
+                response = self.iam_client.create_instance_profile(InstanceProfileName=profile_name)
                 logger.info(f"Created instance profile '{profile_name}'")
                 return response["InstanceProfile"]["Arn"]
             else:
@@ -166,9 +161,7 @@ class IAMManager:
         except ClientError as e:
             if e.response["Error"]["Code"] == "LimitExceeded":
                 # Profile already has a role (can only have one)
-                logger.debug(
-                    f"Instance profile '{profile_name}' already has a role attached"
-                )
+                logger.debug(f"Instance profile '{profile_name}' already has a role attached")
             else:
                 raise
 

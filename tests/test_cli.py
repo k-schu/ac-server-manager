@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from ac_server_manager.cli import status
+from ac_server_manager.cli import status, terminate_all
 from ac_server_manager.config import AC_SERVER_HTTP_PORT, AC_SERVER_TCP_PORT
 
 
@@ -173,3 +173,141 @@ def test_status_command_connectivity_checks_failing(runner: CliRunner) -> None:
         assert "is not reachable" in result.output
         assert "is not accessible" in result.output
         assert "failed" in result.output or "not accessible" in result.output
+
+
+def test_terminate_all_dry_run(runner: CliRunner) -> None:
+    """Test terminate-all command in dry-run mode."""
+    with (
+        patch("ac_server_manager.ec2_manager.EC2Manager") as MockEC2Manager,
+        patch("ac_server_manager.s3_manager.S3Manager") as MockS3Manager,
+    ):
+        mock_ec2 = MagicMock()
+        mock_ec2.find_instances_by_name.return_value = ["i-12345"]
+        mock_ec2.terminate_instance_and_wait.return_value = True
+        MockEC2Manager.return_value = mock_ec2
+
+        mock_s3 = MagicMock()
+        mock_s3.delete_bucket_recursive.return_value = True
+        MockS3Manager.return_value = mock_s3
+
+        result = runner.invoke(terminate_all, ["--dry-run"])
+
+        assert result.exit_code == 0
+        assert "[DRY RUN]" in result.output
+        assert "No resources were actually deleted" in result.output
+        mock_ec2.terminate_instance_and_wait.assert_called_once_with("i-12345", dry_run=True)
+        mock_s3.delete_bucket_recursive.assert_called_once_with(dry_run=True)
+
+
+def test_terminate_all_force(runner: CliRunner) -> None:
+    """Test terminate-all command with force flag."""
+    with (
+        patch("ac_server_manager.ec2_manager.EC2Manager") as MockEC2Manager,
+        patch("ac_server_manager.s3_manager.S3Manager") as MockS3Manager,
+    ):
+        mock_ec2 = MagicMock()
+        mock_ec2.find_instances_by_name.return_value = ["i-12345"]
+        mock_ec2.terminate_instance_and_wait.return_value = True
+        MockEC2Manager.return_value = mock_ec2
+
+        mock_s3 = MagicMock()
+        mock_s3.delete_bucket_recursive.return_value = True
+        MockS3Manager.return_value = mock_s3
+
+        result = runner.invoke(terminate_all, ["--force"])
+
+        assert result.exit_code == 0
+        assert "Teardown completed successfully" in result.output
+        # Should not have prompted for confirmation
+        assert "Type" not in result.output or "TERMINATE" not in result.output.split("Teardown")[0]
+
+
+def test_terminate_all_skip_bucket(runner: CliRunner) -> None:
+    """Test terminate-all command with skip-bucket flag."""
+    with (
+        patch("ac_server_manager.ec2_manager.EC2Manager") as MockEC2Manager,
+        patch("ac_server_manager.s3_manager.S3Manager") as MockS3Manager,
+    ):
+        mock_ec2 = MagicMock()
+        mock_ec2.find_instances_by_name.return_value = ["i-12345"]
+        mock_ec2.terminate_instance_and_wait.return_value = True
+        MockEC2Manager.return_value = mock_ec2
+
+        mock_s3 = MagicMock()
+        MockS3Manager.return_value = mock_s3
+
+        result = runner.invoke(terminate_all, ["--force", "--skip-bucket"])
+
+        assert result.exit_code == 0
+        assert "Teardown completed successfully" in result.output
+        # S3 manager should not have been called to delete bucket
+        mock_s3.delete_bucket_recursive.assert_not_called()
+
+
+def test_terminate_all_with_explicit_ids(runner: CliRunner) -> None:
+    """Test terminate-all command with explicit instance and bucket."""
+    with (
+        patch("ac_server_manager.ec2_manager.EC2Manager") as MockEC2Manager,
+        patch("ac_server_manager.s3_manager.S3Manager") as MockS3Manager,
+    ):
+        mock_ec2 = MagicMock()
+        mock_ec2.terminate_instance_and_wait.return_value = True
+        MockEC2Manager.return_value = mock_ec2
+
+        mock_s3 = MagicMock()
+        mock_s3.delete_bucket_recursive.return_value = True
+        MockS3Manager.return_value = mock_s3
+
+        result = runner.invoke(
+            terminate_all,
+            ["--force", "--instance-id", "i-explicit", "--s3-bucket", "my-explicit-bucket"],
+        )
+
+        assert result.exit_code == 0
+        mock_ec2.terminate_instance_and_wait.assert_called_once_with("i-explicit", dry_run=False)
+        # Check that S3Manager was created with the explicit bucket name
+        MockS3Manager.assert_called_with("my-explicit-bucket", "us-east-1")
+
+
+def test_terminate_all_no_resources_found(runner: CliRunner) -> None:
+    """Test terminate-all command when no resources are found."""
+    with (
+        patch("ac_server_manager.ec2_manager.EC2Manager") as MockEC2Manager,
+        patch("ac_server_manager.s3_manager.S3Manager") as MockS3Manager,
+    ):
+        mock_ec2 = MagicMock()
+        mock_ec2.find_instances_by_name.return_value = []
+        MockEC2Manager.return_value = mock_ec2
+
+        mock_s3 = MagicMock()
+        mock_s3.delete_bucket_recursive.return_value = True
+        MockS3Manager.return_value = mock_s3
+
+        result = runner.invoke(terminate_all, ["--force"])
+
+        assert result.exit_code == 0
+        assert "No EC2 instance to terminate" in result.output
+        assert "Teardown completed successfully" in result.output
+
+
+def test_terminate_all_confirmation_required(runner: CliRunner) -> None:
+    """Test terminate-all command requires confirmation without force."""
+    with (
+        patch("ac_server_manager.ec2_manager.EC2Manager") as MockEC2Manager,
+        patch("ac_server_manager.s3_manager.S3Manager") as MockS3Manager,
+    ):
+        mock_ec2 = MagicMock()
+        mock_ec2.find_instances_by_name.return_value = ["i-12345"]
+        mock_ec2.terminate_instance_and_wait.return_value = True
+        MockEC2Manager.return_value = mock_ec2
+
+        mock_s3 = MagicMock()
+        MockS3Manager.return_value = mock_s3
+
+        # Simulate user entering wrong confirmation
+        result = runner.invoke(terminate_all, input="WRONG\n")
+
+        assert result.exit_code == 1
+        assert "Confirmation failed" in result.output
+        # Should not have called any AWS operations
+        mock_ec2.terminate_instance_and_wait.assert_not_called()
