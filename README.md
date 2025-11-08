@@ -284,7 +284,7 @@ Contributions are welcome! Please:
 
 ## License
 
-[Add your license here]
+MIT License - see [LICENSE](LICENSE) file for details.
 
 ## Support
 
