@@ -43,11 +43,17 @@ region = us-east-1
 # Deploy with defaults (t3.small in us-east-1)
 ac-server-manager deploy my-server.tar.gz
 
+# Deploy with automatic IAM role creation (recommended)
+ac-server-manager deploy my-server.tar.gz --create-iam
+
 # Deploy with SSH access
-ac-server-manager deploy my-server.tar.gz --key-name my-ssh-key
+ac-server-manager deploy my-server.tar.gz --key-name my-ssh-key --create-iam
 
 # Deploy in different region
-ac-server-manager deploy my-server.tar.gz --region eu-west-1
+ac-server-manager deploy my-server.tar.gz --region eu-west-1 --create-iam
+
+# Deploy with existing IAM instance profile
+ac-server-manager deploy my-server.tar.gz --iam-instance-profile my-profile
 ```
 
 Output:
@@ -68,7 +74,7 @@ Deploy Friday evening, terminate Sunday night:
 
 ```bash
 # Friday evening
-ac-server-manager deploy weekend-race.tar.gz
+ac-server-manager deploy weekend-race.tar.gz --create-iam
 
 # Sunday night
 ac-server-manager terminate
@@ -82,7 +88,7 @@ Stop when not in use:
 
 ```bash
 # Deploy once
-ac-server-manager deploy test-server.tar.gz
+ac-server-manager deploy test-server.tar.gz --create-iam
 
 # Stop when done testing
 ac-server-manager stop
@@ -99,10 +105,10 @@ Run 24/7 for the season:
 
 ```bash
 # Deploy at season start
-ac-server-manager deploy league-season-1.tar.gz
+ac-server-manager deploy league-season-1.tar.gz --create-iam
 
 # Update track/config as needed
-ac-server-manager redeploy league-season-1-updated.tar.gz
+ac-server-manager redeploy league-season-1-updated.tar.gz --create-iam
 
 # Terminate at season end
 ac-server-manager terminate
@@ -112,6 +118,64 @@ ac-server-manager terminate
 
 ## Advanced Examples
 
+### IAM Configuration Options
+
+#### Automatic IAM Role Creation
+
+Let the tool automatically create IAM resources for S3 access:
+
+```bash
+# Create with default names (ac-server-role, ac-server-instance-profile)
+ac-server-manager deploy my-server.tar.gz --create-iam
+
+# Create with custom names
+ac-server-manager deploy my-server.tar.gz \
+  --create-iam \
+  --iam-role-name my-ac-role \
+  --iam-instance-profile-name my-ac-profile
+```
+
+**What gets created:**
+- IAM role with EC2 trust policy (allows EC2 to assume the role)
+- Instance profile associated with the role
+- Inline policy with minimal S3 permissions:
+  - `s3:GetObject` on `arn:aws:s3:::bucket-name/*`
+  - `s3:ListBucket` on `arn:aws:s3:::bucket-name`
+
+**Benefits:**
+- Secure: Minimal permissions, no access keys needed on instance
+- Automatic: No manual IAM setup required
+- Reusable: Resources are reused if they already exist
+
+#### Using Existing IAM Instance Profile
+
+If you've already created an IAM instance profile:
+
+```bash
+ac-server-manager deploy my-server.tar.gz \
+  --iam-instance-profile my-existing-profile
+```
+
+The profile must grant S3 access to your bucket. Example IAM policy:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetObject"],
+      "Resource": ["arn:aws:s3:::ac-server-packs/*"]
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["s3:ListBucket"],
+      "Resource": ["arn:aws:s3:::ac-server-packs"]
+    }
+  ]
+}
+```
+
 ### Multi-Region Deployment
 
 ```bash
@@ -119,20 +183,23 @@ ac-server-manager terminate
 ac-server-manager deploy eu-server.tar.gz \
   --region eu-west-1 \
   --instance-name ac-server-eu \
-  --bucket ac-servers-eu
+  --bucket ac-servers-eu \
+  --create-iam
 
 # US server
 ac-server-manager deploy us-server.tar.gz \
   --region us-east-1 \
   --instance-name ac-server-us \
-  --bucket ac-servers-us
+  --bucket ac-servers-us \
+  --create-iam
 ```
 
 ### Larger Server (8-16 players)
 
 ```bash
 ac-server-manager deploy large-server.tar.gz \
-  --instance-type t3.medium
+  --instance-type t3.medium \
+  --create-iam
 ```
 
 **Cost**: ~$30/month for 24/7 operation
@@ -155,7 +222,8 @@ ac-server-manager deploy "$SERVER_PACK" \
   --instance-type t3.small \
   --bucket "ac-servers-$(date +%Y%m)" \
   --instance-name "ac-server-$(date +%Y%m%d)" \
-  --key-name my-key
+  --key-name my-key \
+  --create-iam
 
 echo "Deployment complete!"
 ```

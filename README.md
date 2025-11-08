@@ -64,6 +64,11 @@ Your AWS credentials need the following permissions:
 - EC2: `DescribeInstances`, `RunInstances`, `TerminateInstances`, `StopInstances`, `StartInstances`, `DescribeImages`, `CreateSecurityGroup`, `AuthorizeSecurityGroupIngress`, `DescribeSecurityGroups`
 - S3: `CreateBucket`, `PutObject`, `GetObject`, `ListBucket`, `DeleteObject`
 
+**For automatic IAM role creation (optional, when using `--create-iam` flag):**
+- IAM: `CreateRole`, `GetRole`, `CreateInstanceProfile`, `GetInstanceProfile`, `AddRoleToInstanceProfile`, `PutRolePolicy`
+
+Note: IAM permissions are only required if you use the `--create-iam` flag to automatically create IAM resources. You can alternatively create IAM resources manually and pass them via `--iam-instance-profile`.
+
 ### AWS Configuration
 
 Configure your AWS credentials:
@@ -109,6 +114,48 @@ ac-server-manager deploy server-pack.tar.gz \
   --key-name my-ssh-key
 ```
 
+### S3 Access Options
+
+The EC2 instance needs permissions to download the server pack from S3. There are two ways to configure this:
+
+#### Option 1: Automatic IAM Role Creation (Recommended)
+
+Use the `--create-iam` flag to automatically create an IAM role and instance profile with minimal S3 permissions:
+
+```bash
+ac-server-manager deploy server-pack.tar.gz --create-iam
+```
+
+Optionally specify custom names:
+
+```bash
+ac-server-manager deploy server-pack.tar.gz \
+  --create-iam \
+  --iam-role-name my-custom-role \
+  --iam-instance-profile-name my-custom-profile
+```
+
+**Requirements:**
+- Your AWS credentials must have IAM permissions to create roles and instance profiles
+- Creates a role with trust policy for EC2 service
+- Attaches minimal inline policy: `s3:GetObject` on bucket/* and `s3:ListBucket` on bucket
+- Resources are reused if they already exist (idempotent)
+
+#### Option 2: Use Existing IAM Instance Profile
+
+If you have an existing IAM instance profile with S3 access, you can use it:
+
+```bash
+ac-server-manager deploy server-pack.tar.gz \
+  --iam-instance-profile my-existing-profile
+```
+
+The instance profile must have permissions for:
+- `s3:GetObject` on your bucket and objects
+- `s3:ListBucket` on your bucket
+
+**Note:** If `--iam-instance-profile` is provided, it takes precedence over `--create-iam`.
+
 The server will be deployed and available at the public IP address shown in the output. The server is accessible on:
 - UDP/TCP Port 9600 (game traffic)
 - TCP Port 8081 (HTTP API)
@@ -133,6 +180,12 @@ ac-server-manager terminate
 **Redeploy with a new pack:**
 ```bash
 ac-server-manager redeploy new-server-pack.tar.gz
+```
+
+You can use the same IAM options with redeploy:
+
+```bash
+ac-server-manager redeploy new-server-pack.tar.gz --create-iam
 ```
 
 ### Finding Your Server in Content Manager
