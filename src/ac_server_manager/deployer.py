@@ -98,9 +98,7 @@ class Deployer:
         )
 
         # Step 7: Upload bootstrap script to S3 and get presigned URL
-        upload_result = self.ec2_manager.upload_bootstrap_to_s3(
-            self.s3_manager, bootstrap_script
-        )
+        upload_result = self.ec2_manager.upload_bootstrap_to_s3(self.s3_manager, bootstrap_script)
         if not upload_result:
             logger.error("Failed to upload bootstrap script to S3")
             return None
