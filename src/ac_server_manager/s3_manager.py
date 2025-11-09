@@ -139,3 +139,174 @@ class S3Manager:
         except ClientError as e:
             logger.error(f"Error deleting pack: {e}")
             return False
+
+    def delete_bucket_recursive(self, dry_run: bool = False) -> bool:
+        """Recursively delete S3 bucket including all objects and versions.
+
+        This handles versioned buckets by deleting all object versions and delete markers,
+        then deleting the bucket itself.
+
+        Args:
+            dry_run: If True, only log what would be deleted without performing deletions
+
+        Returns:
+            True if deletion succeeded (or would succeed in dry-run), False otherwise
+        """
+        try:
+            # Check if bucket exists
+            try:
+                self.s3_client.head_bucket(Bucket=self.bucket_name)
+            except ClientError as e:
+                error_code = e.response["Error"]["Code"]
+                if error_code == "404":
+                    logger.info(f"Bucket {self.bucket_name} does not exist, nothing to delete")
+                    return True
+                else:
+                    raise
+
+            logger.info(
+                f"{'[DRY RUN] Would delete' if dry_run else 'Deleting'} bucket {self.bucket_name} and all contents"
+            )
+
+            # Check if bucket has versioning enabled
+            try:
+                versioning = self.s3_client.get_bucket_versioning(Bucket=self.bucket_name)
+                is_versioned = versioning.get("Status") == "Enabled"
+                logger.debug(f"Bucket versioning status: {versioning.get('Status', 'Not enabled')}")
+            except ClientError:
+                is_versioned = False
+
+            # Delete all object versions and delete markers if versioned
+            if is_versioned:
+                logger.info("Bucket has versioning enabled, deleting all versions...")
+                if not self._delete_versioned_objects(dry_run):
+                    return False
+            else:
+                # Delete all objects in non-versioned bucket
+                logger.info("Deleting all objects in bucket...")
+                if not self._delete_objects(dry_run):
+                    return False
+
+            # Delete the bucket itself
+            if dry_run:
+                logger.info(f"[DRY RUN] Would delete bucket: {self.bucket_name}")
+            else:
+                self.s3_client.delete_bucket(Bucket=self.bucket_name)
+                logger.info(f"Deleted bucket: {self.bucket_name}")
+
+            return True
+
+        except ClientError as e:
+            logger.error(f"Error deleting bucket {self.bucket_name}: {e}")
+            return False
+
+    def _delete_objects(self, dry_run: bool = False) -> bool:
+        """Delete all objects in a non-versioned bucket.
+
+        Args:
+            dry_run: If True, only log what would be deleted
+
+        Returns:
+            True if deletion succeeded, False otherwise
+        """
+        try:
+            # Use pagination to handle large buckets
+            paginator = self.s3_client.get_paginator("list_objects_v2")
+            total_objects = 0
+
+            for page in paginator.paginate(Bucket=self.bucket_name):
+                if "Contents" not in page:
+                    continue
+
+                objects_to_delete = [{"Key": obj["Key"]} for obj in page["Contents"]]
+                total_objects += len(objects_to_delete)
+
+                if dry_run:
+                    logger.debug(
+                        f"[DRY RUN] Would delete {len(objects_to_delete)} objects from page"
+                    )
+                    for obj in objects_to_delete[:5]:  # Show first 5
+                        logger.debug(f"[DRY RUN] Would delete: {obj['Key']}")
+                    if len(objects_to_delete) > 5:
+                        logger.debug(f"[DRY RUN] ... and {len(objects_to_delete) - 5} more")
+                else:
+                    # Use bulk delete for efficiency
+                    response = self.s3_client.delete_objects(
+                        Bucket=self.bucket_name, Delete={"Objects": objects_to_delete}
+                    )
+                    deleted_count = len(response.get("Deleted", []))
+                    logger.debug(f"Deleted {deleted_count} objects from page")
+
+            if dry_run:
+                logger.info(f"[DRY RUN] Would delete {total_objects} total objects")
+            else:
+                logger.info(f"Deleted {total_objects} total objects")
+
+            return True
+
+        except ClientError as e:
+            logger.error(f"Error deleting objects: {e}")
+            return False
+
+    def _delete_versioned_objects(self, dry_run: bool = False) -> bool:
+        """Delete all object versions and delete markers from a versioned bucket.
+
+        Args:
+            dry_run: If True, only log what would be deleted
+
+        Returns:
+            True if deletion succeeded, False otherwise
+        """
+        try:
+            # Use pagination to handle large buckets
+            paginator = self.s3_client.get_paginator("list_object_versions")
+            total_versions = 0
+
+            for page in paginator.paginate(Bucket=self.bucket_name):
+                objects_to_delete = []
+
+                # Add all versions
+                for version in page.get("Versions", []):
+                    objects_to_delete.append(
+                        {"Key": version["Key"], "VersionId": version["VersionId"]}
+                    )
+
+                # Add all delete markers
+                for marker in page.get("DeleteMarkers", []):
+                    objects_to_delete.append(
+                        {"Key": marker["Key"], "VersionId": marker["VersionId"]}
+                    )
+
+                if not objects_to_delete:
+                    continue
+
+                total_versions += len(objects_to_delete)
+
+                if dry_run:
+                    logger.debug(
+                        f"[DRY RUN] Would delete {len(objects_to_delete)} versions/markers from page"
+                    )
+                    for obj in objects_to_delete[:5]:  # Show first 5
+                        logger.debug(
+                            f"[DRY RUN] Would delete: {obj['Key']} (version {obj['VersionId']})"
+                        )
+                    if len(objects_to_delete) > 5:
+                        logger.debug(f"[DRY RUN] ... and {len(objects_to_delete) - 5} more")
+                else:
+                    # Use bulk delete for efficiency
+                    response = self.s3_client.delete_objects(
+                        Bucket=self.bucket_name, Delete={"Objects": objects_to_delete}
+                    )
+                    deleted_count = len(response.get("Deleted", []))
+                    logger.debug(f"Deleted {deleted_count} versions/markers from page")
+
+            if dry_run:
+                logger.info(f"[DRY RUN] Would delete {total_versions} total versions/markers")
+            else:
+                logger.info(f"Deleted {total_versions} total versions/markers")
+
+            return True
+
+        except ClientError as e:
+            logger.error(f"Error deleting versioned objects: {e}")
+            return False

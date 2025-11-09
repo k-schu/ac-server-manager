@@ -74,7 +74,7 @@ def test_create_user_data_script(ec2_manager: EC2Manager) -> None:
     # Basic script structure
     assert "#!/bin/bash" in script
     assert "set -euo pipefail" in script
-    
+
     # Required packages installation
     assert "awscli" in script
     assert "unzip" in script
@@ -84,29 +84,29 @@ def test_create_user_data_script(ec2_manager: EC2Manager) -> None:
     assert "lib32gcc-s1" in script
     assert "lib32stdc++6" in script
     assert "iproute2" in script or "net-tools" in script
-    
+
     # S3 download with retries
     assert "aws s3 cp s3://test-bucket/packs/test.tar.gz" in script
     assert "MAX_RETRIES" in script
     assert "RETRY_DELAY" in script
-    
+
     # Pack extraction and verification
     assert "tar -xzf server-pack.tar.gz" in script
-    
+
     # Binary location and verification
     assert "find /opt/acserver" in script
     assert "acServer" in script or "acserver" in script
     assert "file" in script  # file command to check binary type
     assert "ELF" in script
     assert "PE32" in script or "Windows" in script  # Check for Windows binary detection
-    
+
     # Binary permissions - now uses variable
     assert "chmod +x" in script
     assert "chown root:root" in script
-    
+
     # ldd check for dependencies
     assert "ldd" in script
-    
+
     # Systemd service creation with dynamic path
     assert "systemctl daemon-reload" in script
     assert "systemctl enable acserver" in script
@@ -114,17 +114,17 @@ def test_create_user_data_script(ec2_manager: EC2Manager) -> None:
     assert "/etc/systemd/system/acserver.service" in script
     assert "WorkingDirectory=" in script
     assert "ExecStart=" in script
-    
+
     # Validation timeout
     assert "VALIDATION_TIMEOUT" in script
-    
+
     # Process validation
     assert "pgrep" in script
-    
+
     # Port validation with both ss and netstat fallback
     assert "ss -tlnp" in script or "netstat -tlnp" in script
     assert "ss -ulnp" in script or "netstat -ulnp" in script
-    
+
     # Port constants and usage
     assert "AC_SERVER_TCP_PORT=9600" in script
     assert "AC_SERVER_UDP_PORT=9600" in script
@@ -133,17 +133,17 @@ def test_create_user_data_script(ec2_manager: EC2Manager) -> None:
     assert "$AC_SERVER_TCP_PORT" in script
     assert "$AC_SERVER_UDP_PORT" in script
     assert "$AC_SERVER_HTTP_PORT" in script
-    
+
     # HTTP endpoint check
     assert "curl" in script
     assert "http://127.0.0.1" in script
-    
+
     # Public IP retrieval
     assert "169.254.169.254/latest/meta-data/public-ipv4" in script
-    
+
     # acstuff join link
     assert "acstuff" in script
-    
+
     # Log validation - common error patterns
     assert "track not found" in script
     assert "content not found" in script
@@ -153,7 +153,7 @@ def test_create_user_data_script(ec2_manager: EC2Manager) -> None:
     assert "address already in use" in script
     assert "permission denied" in script
     assert "segmentation fault" in script
-    
+
     # Status file
     assert "/opt/acserver/deploy-status.json" in script
     assert "STATUS_FILE" in script
@@ -162,18 +162,18 @@ def test_create_user_data_script(ec2_manager: EC2Manager) -> None:
     assert '"timestamp":' in script
     assert '"public_ip":' in script
     assert '"error_messages":' in script
-    
+
     # Deployment log
     assert "/var/log/acserver-deploy.log" in script
     assert "DEPLOY_LOG" in script
     assert "log_message" in script
-    
+
     # Exit codes
     assert "exit 1" in script  # Failure case
     assert "exit 0" in script  # Success case
     assert "VALIDATION FAILED" in script
     assert "VALIDATION PASSED" in script
-    
+
     # Error tracking
     assert "ERROR_MESSAGES" in script
     assert "add_error" in script
@@ -267,6 +267,75 @@ def test_terminate_instance(ec2_manager: EC2Manager) -> None:
 
     assert result is True
     ec2_manager.ec2_client.terminate_instances.assert_called_once_with(InstanceIds=["i-12345"])
+
+
+def test_terminate_instance_and_wait_success(ec2_manager: EC2Manager) -> None:
+    """Test terminating instance with wait."""
+    ec2_manager.ec2_client.describe_instances = MagicMock(
+        return_value={
+            "Reservations": [
+                {"Instances": [{"InstanceId": "i-12345", "State": {"Name": "running"}}]}
+            ]
+        }
+    )
+    ec2_manager.ec2_client.terminate_instances = MagicMock()
+    mock_waiter = MagicMock()
+    ec2_manager.ec2_client.get_waiter = MagicMock(return_value=mock_waiter)
+
+    result = ec2_manager.terminate_instance_and_wait("i-12345")
+
+    assert result is True
+    ec2_manager.ec2_client.terminate_instances.assert_called_once()
+    mock_waiter.wait.assert_called_once()
+
+
+def test_terminate_instance_and_wait_already_terminated(ec2_manager: EC2Manager) -> None:
+    """Test terminating instance that's already terminated."""
+    ec2_manager.ec2_client.describe_instances = MagicMock(
+        return_value={
+            "Reservations": [
+                {"Instances": [{"InstanceId": "i-12345", "State": {"Name": "terminated"}}]}
+            ]
+        }
+    )
+    ec2_manager.ec2_client.terminate_instances = MagicMock()
+
+    result = ec2_manager.terminate_instance_and_wait("i-12345")
+
+    assert result is True
+    ec2_manager.ec2_client.terminate_instances.assert_not_called()
+
+
+def test_terminate_instance_and_wait_not_found(ec2_manager: EC2Manager) -> None:
+    """Test terminating instance that doesn't exist."""
+    from botocore.exceptions import ClientError
+
+    ec2_manager.ec2_client.describe_instances = MagicMock(
+        side_effect=ClientError(
+            {"Error": {"Code": "InvalidInstanceID.NotFound"}}, "describe_instances"
+        )
+    )
+
+    result = ec2_manager.terminate_instance_and_wait("i-12345")
+
+    assert result is True
+
+
+def test_terminate_instance_and_wait_dry_run(ec2_manager: EC2Manager) -> None:
+    """Test terminating instance in dry-run mode."""
+    ec2_manager.ec2_client.describe_instances = MagicMock(
+        return_value={
+            "Reservations": [
+                {"Instances": [{"InstanceId": "i-12345", "State": {"Name": "running"}}]}
+            ]
+        }
+    )
+    ec2_manager.ec2_client.terminate_instances = MagicMock()
+
+    result = ec2_manager.terminate_instance_and_wait("i-12345", dry_run=True)
+
+    assert result is True
+    ec2_manager.ec2_client.terminate_instances.assert_not_called()
 
 
 def test_find_instances_by_name(ec2_manager: EC2Manager) -> None:

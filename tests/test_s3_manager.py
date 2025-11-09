@@ -120,3 +120,90 @@ def test_delete_pack_success(s3_manager: S3Manager) -> None:
 
     assert result is True
     s3_manager.s3_client.delete_object.assert_called_once()
+
+
+def test_delete_bucket_recursive_bucket_not_found(s3_manager: S3Manager) -> None:
+    """Test delete_bucket_recursive when bucket doesn't exist."""
+    from botocore.exceptions import ClientError
+
+    s3_manager.s3_client.head_bucket = MagicMock(
+        side_effect=ClientError({"Error": {"Code": "404"}}, "head_bucket")
+    )
+
+    result = s3_manager.delete_bucket_recursive()
+
+    assert result is True
+
+
+def test_delete_bucket_recursive_non_versioned(s3_manager: S3Manager) -> None:
+    """Test delete_bucket_recursive with non-versioned bucket."""
+    s3_manager.s3_client.head_bucket = MagicMock()
+    s3_manager.s3_client.get_bucket_versioning = MagicMock(return_value={})
+    s3_manager.s3_client.get_paginator = MagicMock(
+        return_value=MagicMock(
+            paginate=MagicMock(
+                return_value=[{"Contents": [{"Key": "file1.txt"}, {"Key": "file2.txt"}]}]
+            )
+        )
+    )
+    s3_manager.s3_client.delete_objects = MagicMock(
+        return_value={"Deleted": [{"Key": "file1.txt"}, {"Key": "file2.txt"}]}
+    )
+    s3_manager.s3_client.delete_bucket = MagicMock()
+
+    result = s3_manager.delete_bucket_recursive()
+
+    assert result is True
+    s3_manager.s3_client.delete_objects.assert_called_once()
+    s3_manager.s3_client.delete_bucket.assert_called_once()
+
+
+def test_delete_bucket_recursive_versioned(s3_manager: S3Manager) -> None:
+    """Test delete_bucket_recursive with versioned bucket."""
+    s3_manager.s3_client.head_bucket = MagicMock()
+    s3_manager.s3_client.get_bucket_versioning = MagicMock(return_value={"Status": "Enabled"})
+    s3_manager.s3_client.get_paginator = MagicMock(
+        return_value=MagicMock(
+            paginate=MagicMock(
+                return_value=[
+                    {
+                        "Versions": [
+                            {"Key": "file1.txt", "VersionId": "v1"},
+                            {"Key": "file1.txt", "VersionId": "v2"},
+                        ],
+                        "DeleteMarkers": [{"Key": "file2.txt", "VersionId": "dm1"}],
+                    }
+                ]
+            )
+        )
+    )
+    s3_manager.s3_client.delete_objects = MagicMock(
+        return_value={"Deleted": [{"Key": "file1.txt"}, {"Key": "file1.txt"}, {"Key": "file2.txt"}]}
+    )
+    s3_manager.s3_client.delete_bucket = MagicMock()
+
+    result = s3_manager.delete_bucket_recursive()
+
+    assert result is True
+    s3_manager.s3_client.delete_objects.assert_called_once()
+    s3_manager.s3_client.delete_bucket.assert_called_once()
+
+
+def test_delete_bucket_recursive_dry_run(s3_manager: S3Manager) -> None:
+    """Test delete_bucket_recursive in dry-run mode."""
+    s3_manager.s3_client.head_bucket = MagicMock()
+    s3_manager.s3_client.get_bucket_versioning = MagicMock(return_value={})
+    s3_manager.s3_client.get_paginator = MagicMock(
+        return_value=MagicMock(
+            paginate=MagicMock(return_value=[{"Contents": [{"Key": "file1.txt"}]}])
+        )
+    )
+    s3_manager.s3_client.delete_objects = MagicMock()
+    s3_manager.s3_client.delete_bucket = MagicMock()
+
+    result = s3_manager.delete_bucket_recursive(dry_run=True)
+
+    assert result is True
+    # Ensure no actual deletions happened in dry-run mode
+    s3_manager.s3_client.delete_objects.assert_not_called()
+    s3_manager.s3_client.delete_bucket.assert_not_called()

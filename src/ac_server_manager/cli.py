@@ -298,6 +298,185 @@ def terminate(instance_id: Optional[str], instance_name: str, region: str) -> No
 
 
 @main.command()
+@click.option("--instance-id", help="Explicitly specify EC2 instance ID to terminate")
+@click.option(
+    "--instance-name", default="ac-server-instance", help="Instance name tag for discovery"
+)
+@click.option("--s3-bucket", help="Explicitly specify S3 bucket name to delete")
+@click.option("--skip-bucket", is_flag=True, help="Only terminate instance, don't delete S3 bucket")
+@click.option(
+    "--dry-run", is_flag=True, help="Show what would be deleted without performing deletions"
+)
+@click.option("--force", is_flag=True, help="Skip confirmation prompt")
+@click.option("--region", default="us-east-1", help="AWS region")
+def terminate_all(
+    instance_id: Optional[str],
+    instance_name: str,
+    s3_bucket: Optional[str],
+    skip_bucket: bool,
+    dry_run: bool,
+    force: bool,
+    region: str,
+) -> None:
+    """Terminate EC2 instance and delete associated S3 bucket.
+
+    This command performs complete teardown of AC server infrastructure by:
+    1. Terminating the EC2 instance (if found)
+    2. Recursively deleting the S3 bucket and all objects/versions (unless --skip-bucket)
+
+    By default, requires interactive confirmation where you must type TERMINATE (case-sensitive).
+    Use --force to skip confirmation, --dry-run to preview actions without deleting.
+
+    Examples:
+        ac-server-manager terminate-all
+        ac-server-manager terminate-all --force
+        ac-server-manager terminate-all --dry-run
+        ac-server-manager terminate-all --instance-id i-1234567890abcdef0 --s3-bucket my-bucket
+        ac-server-manager terminate-all --skip-bucket
+    """
+    from .ec2_manager import EC2Manager
+    from .s3_manager import S3Manager
+
+    # Safety confirmation unless --force or --dry-run
+    if not force and not dry_run:
+        click.echo(
+            click.style(
+                "\n⚠️  WARNING: This will permanently delete your AC server infrastructure!",
+                fg="red",
+                bold=True,
+            )
+        )
+        click.echo("\nThis action will:")
+        click.echo("  • Terminate the EC2 instance")
+        if not skip_bucket:
+            click.echo("  • Delete the S3 bucket and ALL its contents (including all versions)")
+        click.echo("\nThis operation CANNOT be undone!\n")
+
+        confirmation = click.prompt(
+            click.style('Type "TERMINATE" (case-sensitive) to confirm', fg="yellow", bold=True),
+            type=str,
+        )
+
+        if confirmation != "TERMINATE":
+            click.echo(click.style("✗ Confirmation failed. Aborting.", fg="red"))
+            sys.exit(1)
+
+        click.echo()
+
+    # Initialize managers
+    ec2_manager = EC2Manager(region)
+
+    # Discover or use provided instance ID
+    instance_to_terminate: Optional[str] = None
+    if instance_id:
+        instance_to_terminate = instance_id
+        logger.info(f"Using explicitly provided instance ID: {instance_id}")
+    else:
+        # Try to discover instance by name tag
+        logger.info(f"Discovering instances with name: {instance_name}")
+        instances = ec2_manager.find_instances_by_name(instance_name)
+        if instances:
+            instance_to_terminate = instances[0]
+            logger.info(f"Discovered instance: {instance_to_terminate}")
+            if len(instances) > 1:
+                click.echo(
+                    click.style(
+                        f"⚠️  Warning: Found {len(instances)} instances, using first: {instance_to_terminate}",
+                        fg="yellow",
+                    )
+                )
+        else:
+            logger.info(f"No instances found with name: {instance_name}")
+
+    # Discover or use provided S3 bucket
+    bucket_name: Optional[str] = None
+    if not skip_bucket:
+        if s3_bucket:
+            bucket_name = s3_bucket
+            logger.info(f"Using explicitly provided S3 bucket: {s3_bucket}")
+        else:
+            # Use default bucket name from config
+            config = ServerConfig(aws_region=region, instance_name=instance_name)
+            bucket_name = config.s3_bucket_name
+            logger.info(f"Using default S3 bucket name: {bucket_name}")
+
+    # Display what will be done
+    click.echo(
+        click.style(f"\n{'[DRY RUN] ' if dry_run else ''}Teardown Plan:", fg="cyan", bold=True)
+    )
+
+    if instance_to_terminate:
+        click.echo(f"  • EC2 Instance: {instance_to_terminate}")
+    else:
+        click.echo("  • EC2 Instance: None found (skipping)")
+
+    if not skip_bucket and bucket_name:
+        click.echo(f"  • S3 Bucket: {bucket_name} (recursive delete)")
+    elif skip_bucket:
+        click.echo("  • S3 Bucket: Skipped (--skip-bucket flag)")
+    else:
+        click.echo("  • S3 Bucket: None specified (skipping)")
+
+    click.echo()
+
+    # Track success/failure
+    all_success = True
+
+    # Step 1: Terminate EC2 instance
+    if instance_to_terminate:
+        click.echo(
+            f"{'[DRY RUN] ' if dry_run else ''}Terminating EC2 instance {instance_to_terminate}..."
+        )
+        if ec2_manager.terminate_instance_and_wait(instance_to_terminate, dry_run=dry_run):
+            click.echo(
+                click.style(
+                    f"✓ {'Would terminate' if dry_run else 'Terminated'} instance {instance_to_terminate}",
+                    fg="green",
+                )
+            )
+        else:
+            click.echo(
+                click.style(f"✗ Failed to terminate instance {instance_to_terminate}", fg="red")
+            )
+            all_success = False
+    else:
+        click.echo("No EC2 instance to terminate")
+
+    # Step 2: Delete S3 bucket
+    if not skip_bucket and bucket_name:
+        click.echo(
+            f"\n{'[DRY RUN] ' if dry_run else ''}Deleting S3 bucket {bucket_name} and all contents..."
+        )
+        s3_manager = S3Manager(bucket_name, region)
+        if s3_manager.delete_bucket_recursive(dry_run=dry_run):
+            click.echo(
+                click.style(
+                    f"✓ {'Would delete' if dry_run else 'Deleted'} bucket {bucket_name}",
+                    fg="green",
+                )
+            )
+        else:
+            click.echo(click.style(f"✗ Failed to delete bucket {bucket_name}", fg="red"))
+            all_success = False
+
+    # Final summary
+    click.echo()
+    if dry_run:
+        click.echo(
+            click.style(
+                "✓ Dry run completed. No resources were actually deleted.",
+                fg="cyan",
+                bold=True,
+            )
+        )
+    elif all_success:
+        click.echo(click.style("✓ Teardown completed successfully!", fg="green", bold=True))
+    else:
+        click.echo(click.style("✗ Teardown completed with errors", fg="red", bold=True))
+        sys.exit(1)
+
+
+@main.command()
 @click.argument("pack_file", type=click.Path(exists=True, path_type=Path))
 @click.option("--instance-id", help="Instance ID to replace (if not provided, uses instance name)")
 @click.option("--region", default="us-east-1", help="AWS region")

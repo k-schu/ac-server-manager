@@ -25,15 +25,13 @@ def test_ensure_role_and_instance_profile_creates_new_resources(
     """Test ensure_role_and_instance_profile when creating new resources."""
     # Mock get_role to raise NoSuchEntity (role doesn't exist)
     iam_manager.iam_client.get_role = MagicMock(
-        side_effect=ClientError(
-            {"Error": {"Code": "NoSuchEntity"}}, "get_role"
-        )
+        side_effect=ClientError({"Error": {"Code": "NoSuchEntity"}}, "get_role")
     )
     # Mock create_role
     iam_manager.iam_client.create_role = MagicMock(
         return_value={"Role": {"Arn": "arn:aws:iam::123456789012:role/test-role"}}
     )
-    
+
     # Mock get_instance_profile to first raise NoSuchEntity, then return created profile
     iam_manager.iam_client.get_instance_profile = MagicMock(
         side_effect=[
@@ -43,15 +41,13 @@ def test_ensure_role_and_instance_profile_creates_new_resources(
                     "Arn": "arn:aws:iam::123456789012:instance-profile/test-profile",
                     "Roles": [],
                 }
-            }
+            },
         ]
     )
     # Mock create_instance_profile
     iam_manager.iam_client.create_instance_profile = MagicMock(
         return_value={
-            "InstanceProfile": {
-                "Arn": "arn:aws:iam::123456789012:instance-profile/test-profile"
-            }
+            "InstanceProfile": {"Arn": "arn:aws:iam::123456789012:instance-profile/test-profile"}
         }
     )
     # Mock add_role_to_instance_profile
@@ -96,7 +92,10 @@ def test_ensure_role_and_instance_profile_uses_existing_resources(
 
     assert result == "test-profile"
     # Should not create resources since they exist
-    assert not hasattr(iam_manager.iam_client, "create_role") or not iam_manager.iam_client.create_role.called
+    assert (
+        not hasattr(iam_manager.iam_client, "create_role")
+        or not iam_manager.iam_client.create_role.called
+    )
     # Should still update the policy (idempotent)
     iam_manager.iam_client.put_role_policy.assert_called_once()
 
@@ -147,9 +146,7 @@ def test_ensure_role_and_instance_profile_handles_permission_error(
     )
 
     with pytest.raises(Exception) as exc_info:
-        iam_manager.ensure_role_and_instance_profile(
-            "test-role", "test-profile", "test-bucket"
-        )
+        iam_manager.ensure_role_and_instance_profile("test-role", "test-profile", "test-bucket")
 
     assert "Failed to create/configure IAM resources" in str(exc_info.value)
     assert "User is not authorized" in str(exc_info.value)
@@ -193,9 +190,7 @@ def test_ensure_role_creates_role_with_ec2_trust_policy(
 
     # Mock get_role to raise NoSuchEntity
     iam_manager.iam_client.get_role = MagicMock(
-        side_effect=ClientError(
-            {"Error": {"Code": "NoSuchEntity"}}, "get_role"
-        )
+        side_effect=ClientError({"Error": {"Code": "NoSuchEntity"}}, "get_role")
     )
     # Mock create_role
     iam_manager.iam_client.create_role = MagicMock(

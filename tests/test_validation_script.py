@@ -38,13 +38,13 @@ def test_validation_script_contains_all_checks() -> None:
     # Process checking
     assert "pgrep" in script
     assert "process" in script.lower()
-    
+
     # Port checking function
     assert "check_port_listening" in script
-    
+
     # Log checking
     assert "server logs" in script.lower() or "log" in script.lower()
-    
+
     # Validation execution flow
     assert "validation_failed" in script
 
@@ -139,8 +139,8 @@ def test_validation_script_uses_ss_for_ports() -> None:
     script = manager.create_user_data_script("test-bucket", "test-key.tar.gz")
 
     # Check for ss or netstat command usage (with fallback)
-    assert ("ss -tlnp" in script or "netstat -tlnp" in script)  # TCP listening
-    assert ("ss -ulnp" in script or "netstat -ulnp" in script)  # UDP listening
+    assert "ss -tlnp" in script or "netstat -tlnp" in script  # TCP listening
+    assert "ss -ulnp" in script or "netstat -ulnp" in script  # UDP listening
 
 
 def test_validation_script_provides_troubleshooting_info() -> None:
