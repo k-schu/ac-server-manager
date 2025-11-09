@@ -141,9 +141,7 @@ class EC2Manager:
             logger.error(f"Error getting AMI: {e}")
             return None
 
-    def create_user_data_script(
-        self, s3_bucket: str, s3_key: str, wrapper_port: int = 8082
-    ) -> str:
+    def create_user_data_script(self, s3_bucket: str, s3_key: str, wrapper_port: int = 8082) -> str:
         """Create user data script for instance initialization.
 
         Args:
