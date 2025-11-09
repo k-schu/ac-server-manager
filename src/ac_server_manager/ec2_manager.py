@@ -211,6 +211,13 @@ nohup /opt/acserver/install-wrapper.sh &>/dev/null &
 log_message "✓ Wrapper install scheduled"
 """
 
+        # Derive PACK_ID from S3 key (sanitized basename)
+        import re
+
+        pack_id = re.sub(
+            r"[^a-zA-Z0-9-_]", "_", s3_key.split("/")[-1].replace(".tar.gz", "").replace(".zip", "")
+        )
+
         script = f"""#!/bin/bash
 set -euo pipefail
 
@@ -221,6 +228,11 @@ VALIDATION_TIMEOUT=120
 AC_SERVER_TCP_PORT={AC_SERVER_TCP_PORT}
 AC_SERVER_UDP_PORT={AC_SERVER_UDP_PORT}
 AC_SERVER_HTTP_PORT={AC_SERVER_HTTP_PORT}
+
+# S3 Configuration for content.json patching
+export S3_BUCKET="{s3_bucket}"
+export S3_KEY="{s3_key}"
+export PACK_ID="{pack_id}"
 
 # Logging function - logs to both file and cloud-init output
 log_message() {{
@@ -266,7 +278,11 @@ log_message "===== Starting AC Server Deployment ====="
 log_message "Installing required packages..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq awscli unzip wget tar jq file iproute2 net-tools lib32gcc-s1 lib32stdc++6 2>&1 | tee -a "$DEPLOY_LOG"
+apt-get install -y -qq awscli unzip wget tar jq file iproute2 net-tools lib32gcc-s1 lib32stdc++6 python3-pip 2>&1 | tee -a "$DEPLOY_LOG"
+
+# Install boto3 for S3 operations in content.json patching
+log_message "Installing boto3 for S3 operations..."
+python3 -m pip install --quiet boto3 2>&1 | tee -a "$DEPLOY_LOG" || log_message "⚠ Warning: boto3 installation encountered issues"
 
 # Create directory for AC server
 log_message "Creating server directory..."
@@ -313,13 +329,21 @@ else
     exit 1
 fi
 
-# Fix Windows absolute paths in content.json files
-log_message "Fixing Windows paths in content.json files..."
-python3 << 'PYTHON_FIXUP_SCRIPT'
+# Fix Windows absolute paths in content.json files with S3 presigned URLs
+log_message "Patching content.json files with S3 presigned URLs for Content Manager..."
+python3 << 'PYTHON_CONTENT_PATCHER'
 import json
 import os
 import re
 import sys
+from pathlib import Path
+
+try:
+    import boto3
+    from botocore.exceptions import ClientError
+except ImportError:
+    print("Error: boto3 not available. Skipping content.json patching.", file=sys.stderr)
+    sys.exit(0)
 
 def is_windows_absolute_path(s):
     # Check if string looks like a Windows absolute path
@@ -337,86 +361,104 @@ def normalize_path(path):
     # Normalize backslashes to forward slashes
     return path.replace('\\\\', '/')
 
-def find_content_root_keyword(path_parts):
-    # Find index of content root keyword in path parts
-    keywords = ['content', 'cars', 'tracks', 'skins', 'apps', 'data', 'cfg', 'config']
-    for i, part in enumerate(path_parts):
-        if part.lower() in keywords:
-            return i
-    return -1
-
 def find_file_in_pack(basename, pack_root):
     # Search for file by basename in the pack directory
     for root, dirs, files in os.walk(pack_root):
         for file in files:
-            if file == basename:
-                full_path = os.path.join(root, file)
-                rel_path = os.path.relpath(full_path, pack_root)
-                return './' + rel_path
+            if file.lower() == basename.lower():
+                return os.path.join(root, file)
         for dir in dirs:
-            if dir == basename:
-                full_path = os.path.join(root, dir)
-                rel_path = os.path.relpath(full_path, pack_root)
-                return './' + rel_path
+            if dir.lower() == basename.lower():
+                return os.path.join(root, dir)
     return None
 
-def fix_windows_path(path, pack_root):
-    # Convert Windows absolute path to relative path
+def upload_file_to_s3_and_get_url(local_path, s3_bucket, s3_key, s3_client):
+    # Upload file to S3 and return presigned URL
+    try:
+        # Upload file to S3
+        s3_client.upload_file(local_path, s3_bucket, s3_key)
+        
+        # Generate presigned URL (1 hour expiry)
+        presigned_url = s3_client.generate_presigned_url(
+            'get_object',
+            Params={{'Bucket': s3_bucket, 'Key': s3_key}},
+            ExpiresIn=3600
+        )
+        
+        return presigned_url
+    except Exception as e:
+        print(f"Warning: Failed to upload {{local_path}} to S3: {{e}}", file=sys.stderr)
+        return None
+
+def fix_windows_path_with_s3(path, pack_root, s3_bucket, pack_id, s3_client, uploaded_cache):
+    # Convert Windows absolute path to S3 presigned URL
     # Normalize backslashes
     normalized = normalize_path(path)
     
-    # Split into parts
+    # Split into parts and get basename
     parts = [p for p in normalized.split('/') if p and p != '.']
     
     # Remove drive letter if present
     if parts and re.match(r'^[a-zA-Z]:$', parts[0]):
         parts = parts[1:]
     
-    # Find content root keyword
-    keyword_idx = find_content_root_keyword(parts)
+    if not parts:
+        return path  # Can't process empty path
     
-    if keyword_idx >= 0:
-        # Build relative path from keyword
-        rel_parts = parts[keyword_idx:]
-        return './' + '/'.join(rel_parts)
+    basename = parts[-1]
     
-    # Try to find by basename
-    if parts:
-        basename = parts[-1]
-        found_path = find_file_in_pack(basename, pack_root)
-        if found_path:
-            return found_path
+    # Check if already uploaded
+    if basename in uploaded_cache:
+        return uploaded_cache[basename]
     
-    # Fallback: use basename only
-    if parts:
-        return './' + parts[-1]
+    # Find the actual file in the pack
+    local_file_path = find_file_in_pack(basename, pack_root)
     
-    # Ultimate fallback: return original normalized
-    return './' + normalized.lstrip('/')
+    if not local_file_path:
+        print(f"Warning: File not found for basename '{{basename}}' from path '{{path}}'", file=sys.stderr)
+        return path  # Return original if not found
+    
+    # Check if it's a directory - skip for now
+    if os.path.isdir(local_file_path):
+        print(f"Warning: Path '{{local_file_path}}' is a directory, skipping S3 upload", file=sys.stderr)
+        return path
+    
+    # Generate S3 key for this file
+    s3_key = f"packs/{{pack_id}}/files/{{basename}}"
+    
+    # Upload and get presigned URL
+    presigned_url = upload_file_to_s3_and_get_url(local_file_path, s3_bucket, s3_key, s3_client)
+    
+    if presigned_url:
+        uploaded_cache[basename] = presigned_url
+        print(f"Uploaded {{basename}} -> {{s3_key}}")
+        return presigned_url
+    else:
+        return path  # Return original if upload failed
 
-def fix_value(value, pack_root):
+def fix_value(value, pack_root, s3_bucket, pack_id, s3_client, uploaded_cache):
     # Recursively fix Windows paths in value
     if isinstance(value, str):
         if is_windows_absolute_path(value):
-            return fix_windows_path(value, pack_root)
+            return fix_windows_path_with_s3(value, pack_root, s3_bucket, pack_id, s3_client, uploaded_cache)
         return value
     elif isinstance(value, dict):
-        return {{k: fix_value(v, pack_root) for k, v in value.items()}}
+        return {{k: fix_value(v, pack_root, s3_bucket, pack_id, s3_client, uploaded_cache) for k, v in value.items()}}
     elif isinstance(value, list):
-        return [fix_value(item, pack_root) for item in value]
+        return [fix_value(item, pack_root, s3_bucket, pack_id, s3_client, uploaded_cache) for item in value]
     else:
         return value
 
-def fix_content_json_file(filepath, pack_root):
-    # Fix Windows paths in a single content.json file
+def patch_content_json_file(filepath, pack_root, s3_bucket, pack_id, s3_client, uploaded_cache):
+    # Patch Windows paths in a single content.json file with S3 URLs
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
             data = json.load(f)
         
-        fixed_data = fix_value(data, pack_root)
+        patched_data = fix_value(data, pack_root, s3_bucket, pack_id, s3_client, uploaded_cache)
         
         with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(fixed_data, f, indent=2, ensure_ascii=False)
+            json.dump(patched_data, f, indent=2, ensure_ascii=False)
         
         return True
     except Exception as e:
@@ -424,27 +466,47 @@ def fix_content_json_file(filepath, pack_root):
         return False
 
 def main():
+    # Get configuration from environment
+    s3_bucket = os.environ.get('S3_BUCKET')
+    pack_id = os.environ.get('PACK_ID')
+    
+    if not s3_bucket or not pack_id:
+        print("Error: S3_BUCKET and PACK_ID environment variables must be set", file=sys.stderr)
+        sys.exit(1)
+    
     pack_root = '/opt/acserver'
-    fixed_count = 0
+    
+    # Initialize S3 client
+    try:
+        s3_client = boto3.client('s3')
+    except Exception as e:
+        print(f"Error: Failed to initialize S3 client: {{e}}", file=sys.stderr)
+        sys.exit(1)
+    
+    # Cache for uploaded files (basename -> presigned URL)
+    uploaded_cache = {{}}
+    
+    patched_count = 0
     
     # Find all content.json files
     for root, dirs, files in os.walk(pack_root):
         for file in files:
             if file == 'content.json':
                 filepath = os.path.join(root, file)
-                if fix_content_json_file(filepath, pack_root):
-                    fixed_count += 1
+                print(f"Processing {{filepath}}...")
+                if patch_content_json_file(filepath, pack_root, s3_bucket, pack_id, s3_client, uploaded_cache):
+                    patched_count += 1
     
-    print(f"Fixed {{fixed_count}} content.json file(s)")
+    print(f"Patched {{patched_count}} content.json file(s) with {{len(uploaded_cache)}} files uploaded to S3")
 
 if __name__ == '__main__':
     main()
-PYTHON_FIXUP_SCRIPT
+PYTHON_CONTENT_PATCHER
 
 if [ $? -eq 0 ]; then
-    log_message "✓ Content.json fixup completed"
+    log_message "✓ Content.json patching completed"
 else
-    log_message "⚠ Warning: content.json fixup encountered issues (may be expected if no content.json files)"
+    log_message "⚠ Warning: content.json patching encountered issues (may be expected if no content.json files)"
 fi
 
 # Locate the server executable
