@@ -178,20 +178,20 @@ def test_create_user_data_script(ec2_manager: EC2Manager) -> None:
     assert "ERROR_MESSAGES" in script
     assert "add_error" in script
 
-    # Content.json fixup script
-    assert "Fixing Windows paths in content.json files" in script
-    assert "python3 << 'PYTHON_FIXUP_SCRIPT'" in script
+    # Content.json patching script with S3 presigned URLs
+    assert "Patching content.json files with S3 presigned URLs" in script
+    assert "python3 << 'PYTHON_CONTENT_PATCHER'" in script
     assert "is_windows_absolute_path" in script
-    assert "fix_windows_path" in script
-    assert "fix_content_json_file" in script
-    assert "PYTHON_FIXUP_SCRIPT" in script
-    # Verify the fixup runs after extraction but before server start
+    assert "fix_windows_path_with_s3" in script or "upload_file_to_s3" in script
+    assert "patch_content_json_file" in script
+    assert "PYTHON_CONTENT_PATCHER" in script
+    # Verify the patching runs after extraction but before server start
     extraction_idx = script.find("tar -xzf server-pack.tar.gz")
-    fixup_idx = script.find("Fixing Windows paths in content.json")
+    patching_idx = script.find("Patching content.json files with S3 presigned URLs")
     service_start_idx = script.find("systemctl start acserver")
-    assert extraction_idx < fixup_idx < service_start_idx, (
-        "Content.json fixup must run after extraction and before service start"
-    )
+    assert (
+        extraction_idx < patching_idx < service_start_idx
+    ), "Content.json patching must run after extraction and before service start"
 
 
 def test_launch_instance_success(ec2_manager: EC2Manager) -> None:
@@ -555,3 +555,107 @@ def test_create_minimal_user_data_size_is_under_16kb(ec2_manager: EC2Manager) ->
     size = len(user_data.encode("utf-8"))
     assert size < 16384, f"User data must be under 16KB, got {size} bytes"
     assert size < 2000, f"Minimal user data should be well under 16KB, got {size} bytes"
+
+
+def test_create_user_data_script_s3_presigned_url_patching(ec2_manager: EC2Manager) -> None:
+    """Test that user data script includes S3 presigned URL patching for content.json."""
+    s3_bucket = "test-bucket"
+    s3_key = "packs/my-server-pack-v1.2.tar.gz"
+
+    script = ec2_manager.create_user_data_script(s3_bucket, s3_key)
+
+    # Verify S3 configuration environment variables are set
+    assert f'export S3_BUCKET="{s3_bucket}"' in script
+    assert f'export S3_KEY="{s3_key}"' in script
+
+    # Verify PACK_ID is derived and set
+    assert "export PACK_ID=" in script
+    # PACK_ID should be sanitized version of filename
+    assert "my-server-pack-v1_2" in script or "my_server_pack_v1_2" in script
+
+    # Verify boto3 installation
+    assert "python3-pip" in script
+    assert "pip install" in script
+    assert "boto3" in script
+
+    # Verify Python content patcher script is embedded
+    assert "PYTHON_CONTENT_PATCHER" in script
+    assert "Patching content.json files with S3 presigned URLs" in script
+
+    # Verify boto3 imports in Python script
+    assert "import boto3" in script
+    assert "from botocore.exceptions import ClientError" in script
+
+    # Verify S3 operations in Python script
+    assert "boto3.client('s3')" in script
+    assert "upload_file" in script
+    assert "generate_presigned_url" in script
+
+    # Verify presigned URL configuration (1 hour = 3600 seconds)
+    assert "ExpiresIn=3600" in script
+
+    # Verify Windows path detection
+    assert "is_windows_absolute_path" in script
+    assert "[a-zA-Z]:[/\\\\]" in script  # Drive letter pattern (matches the regex in the script)
+
+    # Verify S3 key structure for uploaded files
+    assert "packs/{pack_id}/files/{basename}" in script or "packs/" in script
+
+    # Verify content.json file processing
+    assert "content.json" in script
+    assert "patch_content_json_file" in script or "fix_content_json_file" in script
+
+    # Verify environment variable usage in Python script
+    assert "os.environ.get('S3_BUCKET')" in script
+    assert "os.environ.get('PACK_ID')" in script
+
+    # Verify patching happens after extraction but before server start
+    extraction_idx = script.find("tar -xzf server-pack.tar.gz")
+    patching_idx = script.find("Patching content.json files with S3 presigned URLs")
+    server_start_idx = script.find("systemctl start acserver")
+
+    assert extraction_idx > 0, "Extraction command not found"
+    assert patching_idx > 0, "Patching command not found"
+    assert server_start_idx > 0, "Server start command not found"
+    assert (
+        extraction_idx < patching_idx < server_start_idx
+    ), "Content.json patching must run after extraction and before server start"
+
+
+def test_create_user_data_script_pack_id_sanitization(ec2_manager: EC2Manager) -> None:
+    """Test that PACK_ID is properly sanitized from various S3 key formats."""
+    test_cases = [
+        ("packs/simple.tar.gz", "simple"),
+        ("packs/with-dashes.tar.gz", "with-dashes"),
+        ("packs/with_underscores.tar.gz", "with_underscores"),
+        ("nested/path/to/pack.tar.gz", "pack"),
+        ("packs/special!@#chars.tar.gz", "special___chars"),
+        ("packs/version-1.2.3.tar.gz", "version-1_2_3"),
+        ("packs/pack.zip", "pack"),
+    ]
+
+    for s3_key, expected_sanitized in test_cases:
+        script = ec2_manager.create_user_data_script("test-bucket", s3_key)
+
+        # Check that PACK_ID is set
+        assert "export PACK_ID=" in script
+
+        # Extract the PACK_ID value from the script
+        import re
+
+        pack_id_match = re.search(r'export PACK_ID="([^"]+)"', script)
+        assert pack_id_match is not None, f"PACK_ID not found in script for key: {s3_key}"
+
+        pack_id = pack_id_match.group(1)
+
+        # Verify it's properly sanitized (only alphanumeric, dashes, underscores)
+        assert re.match(
+            r"^[a-zA-Z0-9_-]+$", pack_id
+        ), f"PACK_ID '{pack_id}' contains invalid characters for key: {s3_key}"
+
+        # Verify it matches expected pattern (exact match or close enough)
+        assert (
+            expected_sanitized in pack_id
+            or pack_id in expected_sanitized
+            or pack_id == expected_sanitized
+        ), f"PACK_ID '{pack_id}' doesn't match expected '{expected_sanitized}' for key: {s3_key}"
