@@ -170,3 +170,6 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 - **Issues**: https://github.com/k-schu/ac-server-manager/issues
 - **Full Docs**: [docs/README_FULL.md](docs/README_FULL.md)
+
+## References
+This project heavily references Content Manager (https://assettocorsa.club/content-manager.html) server deployments. Future versions may implement https://assettoserver.org/ instead. Please feel free to fork, contribute, and raise feature requets, this will help me learn!
