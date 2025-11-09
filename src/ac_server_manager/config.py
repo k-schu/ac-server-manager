@@ -28,6 +28,10 @@ class ServerConfig:
     server_name: str = "AC Server"
     max_players: int = 8
 
+    # AC Wrapper Configuration
+    wrapper_port: int = 8082  # Port for ac-server-wrapper (CM content downloads)
+    wrapper_user: str = "acserver"  # User to run wrapper service
+
     # Instance tags
     instance_name: str = "ac-server-instance"
 

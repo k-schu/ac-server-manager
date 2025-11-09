@@ -42,6 +42,29 @@ def test_create_security_group_new(ec2_manager: EC2Manager) -> None:
     ec2_manager.ec2_client.authorize_security_group_ingress.assert_called_once()
 
 
+def test_create_security_group_with_extra_ports(ec2_manager: EC2Manager) -> None:
+    """Test create_security_group with extra ports."""
+    ec2_manager.ec2_client.describe_security_groups = MagicMock(return_value={"SecurityGroups": []})
+    ec2_manager.ec2_client.create_security_group = MagicMock(return_value={"GroupId": "sg-11111"})
+    ec2_manager.ec2_client.authorize_security_group_ingress = MagicMock()
+
+    result = ec2_manager.create_security_group("test-sg", "Test security group", extra_ports=[8082, 8083])
+
+    assert result == "sg-11111"
+    ec2_manager.ec2_client.create_security_group.assert_called_once()
+    
+    # Verify ingress rules were called with extra ports
+    call_args = ec2_manager.ec2_client.authorize_security_group_ingress.call_args
+    ip_permissions = call_args[1]["IpPermissions"]
+    
+    # Check that we have the standard ports plus extra ports
+    assert len(ip_permissions) >= 6  # SSH, HTTP, TCP, UDP + 2 extra
+    
+    # Verify extra ports are included
+    extra_port_rules = [rule for rule in ip_permissions if rule["FromPort"] in [8082, 8083]]
+    assert len(extra_port_rules) == 2
+
+
 def test_get_ubuntu_ami_success(ec2_manager: EC2Manager) -> None:
     """Test getting Ubuntu AMI."""
     ec2_manager.ec2_client.describe_images = MagicMock(
@@ -177,6 +200,46 @@ def test_create_user_data_script(ec2_manager: EC2Manager) -> None:
     # Error tracking
     assert "ERROR_MESSAGES" in script
     assert "add_error" in script
+
+
+def test_create_user_data_script_with_wrapper_port(ec2_manager: EC2Manager) -> None:
+    """Test user data script creation with wrapper port."""
+    script = ec2_manager.create_user_data_script("test-bucket", "packs/test.tar.gz", wrapper_port=8082)
+
+    # Wrapper port configuration
+    assert "WRAPPER_PORT=8082" in script
+    
+    # Node.js installation
+    assert "nodejs" in script
+    assert "nodesource" in script or "node" in script
+    
+    # Wrapper directory setup
+    assert "WRAPPER_DIR" in script
+    assert "/opt/acserver/wrapper" in script
+    
+    # Preset directory setup
+    assert "PRESET_DIR" in script
+    assert "/opt/acserver/preset" in script
+    assert "cm_content" in script
+    
+    # Wrapper installation from GitHub
+    assert "gro-ove/ac-server-wrapper" in script or "ac-server-wrapper" in script
+    
+    # npm install
+    assert "npm ci" in script or "npm install" in script
+    
+    # Wrapper systemd service
+    assert "/etc/systemd/system/acserver-wrapper.service" in script
+    assert "ac-server-wrapper.js" in script
+    assert "--preset" in script
+    assert "--port" in script
+    
+    # Service management
+    assert "systemctl enable acserver-wrapper" in script
+    assert "systemctl start acserver-wrapper" in script
+    
+    # Wrapper port in status JSON
+    assert '"wrapper":' in script or 'wrapper' in script
 
 
 def test_launch_instance_success(ec2_manager: EC2Manager) -> None:

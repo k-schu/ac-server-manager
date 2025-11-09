@@ -1,7 +1,7 @@
 """EC2 operations for AC Server Manager."""
 
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 import boto3
 from botocore.exceptions import ClientError
@@ -24,12 +24,15 @@ class EC2Manager:
         self.ec2_client = boto3.client("ec2", region_name=region)
         self.ec2_resource = boto3.resource("ec2", region_name=region)
 
-    def create_security_group(self, group_name: str, description: str) -> Optional[str]:
+    def create_security_group(
+        self, group_name: str, description: str, extra_ports: Optional[list[int]] = None
+    ) -> Optional[str]:
         """Create security group with rules for AC server.
 
         Args:
             group_name: Name of the security group
             description: Description of the security group
+            extra_ports: Additional TCP ports to open (e.g., wrapper_port)
 
         Returns:
             Security group ID, or None if creation failed
@@ -53,34 +56,50 @@ class EC2Manager:
             logger.info(f"Created security group {group_name}: {group_id}")
 
             # Add ingress rules for AC server
+            ip_permissions: list[dict[str, Any]] = [
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 22,
+                    "ToPort": 22,
+                    "IpRanges": [{"CidrIp": "0.0.0.0/0", "Description": "SSH"}],
+                },
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": AC_SERVER_HTTP_PORT,
+                    "ToPort": AC_SERVER_HTTP_PORT,
+                    "IpRanges": [{"CidrIp": "0.0.0.0/0", "Description": "AC HTTP"}],
+                },
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": AC_SERVER_TCP_PORT,
+                    "ToPort": AC_SERVER_TCP_PORT,
+                    "IpRanges": [{"CidrIp": "0.0.0.0/0", "Description": "AC TCP"}],
+                },
+                {
+                    "IpProtocol": "udp",
+                    "FromPort": AC_SERVER_UDP_PORT,
+                    "ToPort": AC_SERVER_UDP_PORT,
+                    "IpRanges": [{"CidrIp": "0.0.0.0/0", "Description": "AC UDP"}],
+                },
+            ]
+
+            # Add extra ports if specified
+            if extra_ports:
+                for port in extra_ports:
+                    ip_permissions.append(
+                        {
+                            "IpProtocol": "tcp",
+                            "FromPort": port,
+                            "ToPort": port,
+                            "IpRanges": [
+                                {"CidrIp": "0.0.0.0/0", "Description": f"Extra port {port}"}
+                            ],
+                        }
+                    )
+
             self.ec2_client.authorize_security_group_ingress(
                 GroupId=group_id,
-                IpPermissions=[
-                    {
-                        "IpProtocol": "tcp",
-                        "FromPort": 22,
-                        "ToPort": 22,
-                        "IpRanges": [{"CidrIp": "0.0.0.0/0", "Description": "SSH"}],
-                    },
-                    {
-                        "IpProtocol": "tcp",
-                        "FromPort": AC_SERVER_HTTP_PORT,
-                        "ToPort": AC_SERVER_HTTP_PORT,
-                        "IpRanges": [{"CidrIp": "0.0.0.0/0", "Description": "AC HTTP"}],
-                    },
-                    {
-                        "IpProtocol": "tcp",
-                        "FromPort": AC_SERVER_TCP_PORT,
-                        "ToPort": AC_SERVER_TCP_PORT,
-                        "IpRanges": [{"CidrIp": "0.0.0.0/0", "Description": "AC TCP"}],
-                    },
-                    {
-                        "IpProtocol": "udp",
-                        "FromPort": AC_SERVER_UDP_PORT,
-                        "ToPort": AC_SERVER_UDP_PORT,
-                        "IpRanges": [{"CidrIp": "0.0.0.0/0", "Description": "AC UDP"}],
-                    },
-                ],
+                IpPermissions=ip_permissions,  # type: ignore[arg-type]
             )
             logger.info(f"Added ingress rules to security group {group_id}")
 
@@ -122,12 +141,15 @@ class EC2Manager:
             logger.error(f"Error getting AMI: {e}")
             return None
 
-    def create_user_data_script(self, s3_bucket: str, s3_key: str) -> str:
+    def create_user_data_script(
+        self, s3_bucket: str, s3_key: str, wrapper_port: int = 8082
+    ) -> str:
         """Create user data script for instance initialization.
 
         Args:
             s3_bucket: S3 bucket containing the pack file
             s3_key: S3 key of the pack file
+            wrapper_port: Port for ac-server-wrapper (default: 8082)
 
         Returns:
             User data script as string
@@ -142,6 +164,7 @@ VALIDATION_TIMEOUT=120
 AC_SERVER_TCP_PORT={AC_SERVER_TCP_PORT}
 AC_SERVER_UDP_PORT={AC_SERVER_UDP_PORT}
 AC_SERVER_HTTP_PORT={AC_SERVER_HTTP_PORT}
+WRAPPER_PORT={wrapper_port}
 
 # Logging function - logs to both file and cloud-init output
 log_message() {{
@@ -170,7 +193,8 @@ write_status() {{
   "ports": {{
     "tcp": $AC_SERVER_TCP_PORT,
     "udp": $AC_SERVER_UDP_PORT,
-    "http": $AC_SERVER_HTTP_PORT
+    "http": $AC_SERVER_HTTP_PORT,
+    "wrapper": $WRAPPER_PORT
   }},
   "error_messages": [
     $(printf '"%s"' "${{ERROR_MESSAGES[@]}}" | paste -sd, -)
@@ -333,14 +357,119 @@ EOFSERVICE
 
 log_message "✓ Systemd service created"
 
-# Enable and start service
-log_message "Starting AC server service..."
+# Install and configure ac-server-wrapper
+log_message "Setting up ac-server-wrapper..."
+
+# Install Node.js (required for wrapper)
+log_message "Installing Node.js..."
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash - 2>&1 | tee -a "$DEPLOY_LOG"
+apt-get install -y nodejs 2>&1 | tee -a "$DEPLOY_LOG"
+
+# Check if wrapper is included in the pack
+WRAPPER_DIR="/opt/acserver/wrapper"
+if [ -d "/opt/acserver/ac-server-wrapper" ]; then
+    log_message "✓ ac-server-wrapper found in pack"
+    mv /opt/acserver/ac-server-wrapper "$WRAPPER_DIR"
+elif [ -f "/opt/acserver/ac-server-wrapper.js" ]; then
+    log_message "✓ ac-server-wrapper.js found in pack"
+    mkdir -p "$WRAPPER_DIR"
+    mv /opt/acserver/ac-server-wrapper.js "$WRAPPER_DIR/"
+    mv /opt/acserver/package*.json "$WRAPPER_DIR/" 2>/dev/null || true
+else
+    log_message "Wrapper not in pack, fetching from GitHub..."
+    mkdir -p "$WRAPPER_DIR"
+    cd "$WRAPPER_DIR"
+    
+    # Clone or download the wrapper from GitHub
+    WRAPPER_REPO_URL="https://github.com/gro-ove/ac-server-wrapper"
+    if git --version > /dev/null 2>&1; then
+        apt-get install -y git 2>&1 | tee -a "$DEPLOY_LOG"
+        git clone "$WRAPPER_REPO_URL" . 2>&1 | tee -a "$DEPLOY_LOG"
+    else
+        log_message "Git not available, downloading release archive..."
+        wget -q "$WRAPPER_REPO_URL/archive/refs/heads/master.zip" -O wrapper.zip 2>&1 | tee -a "$DEPLOY_LOG"
+        unzip -q wrapper.zip 2>&1 | tee -a "$DEPLOY_LOG"
+        mv ac-server-wrapper-master/* . 2>&1 | tee -a "$DEPLOY_LOG"
+        rm -rf ac-server-wrapper-master wrapper.zip
+    fi
+    cd /opt/acserver
+fi
+
+# Ensure preset directory exists
+PRESET_DIR="/opt/acserver/preset"
+if [ ! -d "$PRESET_DIR" ]; then
+    log_message "Creating preset directory..."
+    mkdir -p "$PRESET_DIR"
+    
+    # Try to find and copy preset content
+    if [ -d "$WORKING_DIR/cfg" ]; then
+        log_message "Copying preset from $WORKING_DIR..."
+        cp -r "$WORKING_DIR"/* "$PRESET_DIR/"
+    else
+        log_message "⚠ Warning: No preset content found, wrapper may not work correctly"
+    fi
+fi
+
+# Ensure cm_content directory exists
+if [ ! -d "$PRESET_DIR/cm_content" ]; then
+    log_message "Creating cm_content directory..."
+    mkdir -p "$PRESET_DIR/cm_content"
+fi
+
+# Install wrapper dependencies
+log_message "Installing wrapper dependencies..."
+cd "$WRAPPER_DIR"
+if [ -f "package.json" ]; then
+    npm ci --production 2>&1 | tee -a "$DEPLOY_LOG" || npm install --production 2>&1 | tee -a "$DEPLOY_LOG"
+    log_message "✓ Wrapper dependencies installed"
+else
+    log_message "⚠ Warning: No package.json found in wrapper directory"
+fi
+
+# Set permissions
+chown -R root:root "$WRAPPER_DIR"
+chmod +x "$WRAPPER_DIR"/*.js 2>/dev/null || true
+
+# Create systemd service for wrapper
+log_message "Creating ac-server-wrapper systemd service..."
+cat > /etc/systemd/system/acserver-wrapper.service << EOFWRAPPER
+[Unit]
+Description=AC Server Wrapper (Content Manager)
+After=network.target acserver.service
+Requires=acserver.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=$WRAPPER_DIR
+ExecStart=/usr/bin/node $WRAPPER_DIR/ac-server-wrapper.js --preset $PRESET_DIR --port {wrapper_port}
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:/var/log/acserver-wrapper-stdout.log
+StandardError=append:/var/log/acserver-wrapper-stderr.log
+
+[Install]
+WantedBy=multi-user.target
+EOFWRAPPER
+
+log_message "✓ ac-server-wrapper systemd service created"
+
+# Enable and start wrapper service
+systemctl daemon-reload
+systemctl enable acserver-wrapper
+log_message "✓ ac-server-wrapper service enabled"
+
+# Enable and start services
+log_message "Starting AC server and wrapper services..."
 systemctl daemon-reload
 systemctl enable acserver
+systemctl enable acserver-wrapper
 systemctl start acserver
+sleep 5  # Give acServer a moment to start first
+systemctl start acserver-wrapper
 
 # Wait for server to start
-log_message "Waiting for server to initialize (timeout: ${{VALIDATION_TIMEOUT}}s)..."
+log_message "Waiting for servers to initialize (timeout: ${{VALIDATION_TIMEOUT}}s)..."
 sleep 10
 
 # Run validation checks
@@ -415,6 +544,14 @@ fi
 
 if ! check_port_listening tcp $AC_SERVER_HTTP_PORT "HTTP"; then
     validation_failed=true
+fi
+
+# Check wrapper port
+log_message "Checking wrapper port..."
+if check_port_listening tcp $WRAPPER_PORT "wrapper"; then
+    log_message "✓ Wrapper port is listening"
+else
+    log_message "⚠ Warning: Wrapper port not listening (wrapper may not have started yet)"
 fi
 
 # Check HTTP health endpoint
