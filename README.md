@@ -1,6 +1,6 @@
 # AC Server Manager
 
-Automated deployment tool for Assetto Corsa dedicated servers on AWS. Deploy, manage, and tear down Assetto Corsa servers with a single command.
+Purely vibecoded automated deployment tool for Assetto Corsa dedicated servers on AWS. Deploy, manage, and tear down Assetto Corsa servers with a single command. This was a learning exercise, a way to connect with friends, and prepare for upcoming events.
 
 ## Features
 
