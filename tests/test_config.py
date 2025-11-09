@@ -24,7 +24,7 @@ def test_server_config_defaults() -> None:
     assert config.iam_instance_profile is None
     assert config.server_name == "AC Server"
     assert config.max_players == 8
-    assert config.enable_wrapper is False
+    assert config.enable_wrapper is True
     assert config.wrapper_port == 8082
     assert config.instance_name == "ac-server-instance"
 
