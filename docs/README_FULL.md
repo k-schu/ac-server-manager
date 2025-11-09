@@ -160,6 +160,31 @@ The server will be deployed and available at the public IP address shown in the 
 - UDP/TCP Port 9600 (game traffic)
 - TCP Port 8081 (HTTP API)
 
+### AC Server Wrapper for Content Manager
+
+You can optionally enable the ac-server-wrapper, which allows Content Manager to download missing content (cars, tracks) directly from the server. This is useful for servers with custom content.
+
+```bash
+ac-server-manager deploy server-pack.tar.gz --enable-wrapper
+```
+
+With a custom port:
+
+```bash
+ac-server-manager deploy server-pack.tar.gz \
+  --enable-wrapper \
+  --wrapper-port 9000
+```
+
+**What the wrapper does:**
+- Installs Node.js 20 on the server
+- Sets up ac-server-wrapper as a systemd service
+- Opens the wrapper port in the security group (default: 8082)
+- Enables automatic content downloads in Content Manager
+- Runs in the background without blocking server startup
+
+**Note:** The wrapper installation happens asynchronously after the server starts. Check `/var/log/acserver-wrapper-install.log` for installation progress.
+
 ### Managing Your Server
 
 **Stop a running server:**
@@ -182,10 +207,10 @@ ac-server-manager terminate
 ac-server-manager redeploy new-server-pack.tar.gz
 ```
 
-You can use the same IAM options with redeploy:
+You can use the same IAM and wrapper options with redeploy:
 
 ```bash
-ac-server-manager redeploy new-server-pack.tar.gz --create-iam
+ac-server-manager redeploy new-server-pack.tar.gz --create-iam --enable-wrapper
 ```
 
 ### Finding Your Server in Content Manager
