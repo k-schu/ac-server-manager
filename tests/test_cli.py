@@ -460,4 +460,3 @@ def test_redeploy_wrapper_defaults(runner: CliRunner) -> None:
             assert config.wrapper_port == 8082
         finally:
             tmp_path.unlink()
-
