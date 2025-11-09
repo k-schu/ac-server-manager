@@ -74,9 +74,7 @@ class Deployer:
 
         # Step 4: Create security group
         security_group_id = self.ec2_manager.create_security_group(
-            self.config.security_group_name,
-            "Security group for Assetto Corsa server",
-            extra_ports=[self.config.wrapper_port],
+            self.config.security_group_name, "Security group for Assetto Corsa server"
         )
         if not security_group_id:
             logger.error("Failed to create security group")
@@ -89,9 +87,7 @@ class Deployer:
             return None
 
         # Step 6: Create user data script
-        user_data = self.ec2_manager.create_user_data_script(
-            self.config.s3_bucket_name, s3_key, self.config.wrapper_port
-        )
+        user_data = self.ec2_manager.create_user_data_script(self.config.s3_bucket_name, s3_key)
 
         # Step 7: Launch instance
         instance_id = self.ec2_manager.launch_instance(
