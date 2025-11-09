@@ -179,14 +179,14 @@ def main() -> None:
 )
 @click.option(
     "--enable-wrapper/--no-enable-wrapper",
-    default=False,
-    help="Enable ac-server-wrapper for CM content downloads (default: off)",
+    default=True,
+    help="Enable ac-server-wrapper for CM content downloads (default: on)",
 )
 @click.option(
     "--wrapper-port",
     type=int,
     default=8082,
-    help="Port for ac-server-wrapper (default: 8082)",
+    help="Port for ac-server-wrapper (default: 8082, must differ from AC HTTP port 8081)",
 )
 def deploy(
     pack_file: Path,
@@ -512,14 +512,14 @@ def terminate_all(
 )
 @click.option(
     "--enable-wrapper/--no-enable-wrapper",
-    default=False,
-    help="Enable ac-server-wrapper for CM content downloads (default: off)",
+    default=True,
+    help="Enable ac-server-wrapper for CM content downloads (default: on)",
 )
 @click.option(
     "--wrapper-port",
     type=int,
     default=8082,
-    help="Port for ac-server-wrapper (default: 8082)",
+    help="Port for ac-server-wrapper (default: 8082, must differ from AC HTTP port 8081)",
 )
 def redeploy(
     pack_file: Path,

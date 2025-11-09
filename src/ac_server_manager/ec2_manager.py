@@ -144,15 +144,15 @@ class EC2Manager:
             return None
 
     def create_user_data_script(
-        self, s3_bucket: str, s3_key: str, enable_wrapper: bool = False, wrapper_port: int = 8082
+        self, s3_bucket: str, s3_key: str, enable_wrapper: bool = True, wrapper_port: int = 8082
     ) -> str:
         """Create user data script for instance initialization.
 
         Args:
             s3_bucket: S3 bucket containing the pack file
             s3_key: S3 key of the pack file
-            enable_wrapper: Whether to install and run ac-server-wrapper
-            wrapper_port: Port for ac-server-wrapper (default: 8082)
+            enable_wrapper: Whether to install and run ac-server-wrapper (default: True)
+            wrapper_port: Port for ac-server-wrapper (default: 8082, must differ from AC HTTP port 8081)
 
         Returns:
             User data script as string
@@ -187,7 +187,7 @@ mkdir -p "$D" "$D/cm_content"
 cd "$W"
 [ -f "package.json" ] && {{ export NODE_ENV=production; timeout 300 npm ci --production >> "$L" 2>&1 || timeout 300 npm install --production >> "$L" 2>&1 || {{ log "npm failed"; exit 1; }}; }}
 chown -R root:root "$W" 2>/dev/null; chmod +x "$W"/*.js 2>/dev/null || true
-cat > /etc/systemd/system/acserver-wrapper.service << 'SVC'
+cat > /etc/systemd/system/acserver-wrapper.service << SVC
 [Unit]
 Description=AC Server Wrapper
 After=network.target acserver.service

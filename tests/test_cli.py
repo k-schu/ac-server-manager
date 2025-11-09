@@ -368,7 +368,7 @@ def test_deploy_wrapper_defaults(runner: CliRunner) -> None:
             assert result.exit_code == 0
             MockDeployer.assert_called_once()
             config = MockDeployer.call_args[0][0]
-            assert config.enable_wrapper is False
+            assert config.enable_wrapper is True
             assert config.wrapper_port == 8082
         finally:
             tmp_path.unlink()
@@ -456,7 +456,7 @@ def test_redeploy_wrapper_defaults(runner: CliRunner) -> None:
             assert result.exit_code == 0
             MockDeployer.assert_called_once()
             config = MockDeployer.call_args[0][0]
-            assert config.enable_wrapper is False
+            assert config.enable_wrapper is True
             assert config.wrapper_port == 8082
         finally:
             tmp_path.unlink()
