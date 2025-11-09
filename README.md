@@ -9,6 +9,7 @@ Purely vibecoded automated deployment tool for Assetto Corsa dedicated servers o
 - 💰 **Cost-optimized** with t3.small instances (~$15/month)
 - 🔄 **Complete lifecycle** management (deploy, start, stop, terminate)
 - 🧹 **Safe teardown** with `terminate-all` command
+- 📦 **Content Manager integration** with ac-server-wrapper for direct car pack downloads
 
 ## Quick Start
 
@@ -122,11 +123,43 @@ ac-server-manager terminate-all --skip-bucket
 - `--create-iam` - Auto-create IAM role for S3 access
 - `--key-name TEXT` - SSH key pair name
 
+## Content Manager Integration
+
+AC Server Manager automatically installs and configures [ac-server-wrapper](https://github.com/gro-ove/ac-server-wrapper) to enable Content Manager clients to download car packs directly from your server.
+
+### Quick Start
+
+1. **Generate car packs:**
+   ```bash
+   python scripts/generate_cm_pack.py /path/to/cars --batch --output ./cm_content/cars
+   ```
+
+2. **Include in your preset:**
+   ```
+   preset/
+   ├── cfg/
+   ├── cm_content/
+   │   ├── cars/
+   │   │   └── *.zip
+   │   └── content.json
+   └── content/
+   ```
+
+3. **Deploy:**
+   ```bash
+   ac-server-manager deploy preset.tar.gz --create-iam
+   ```
+
+4. **Access:** Content Manager clients can now download cars from `http://<server-ip>:8082/cm_content/`
+
+For detailed information, see [AC Wrapper Integration](docs/AC_WRAPPER_INTEGRATION.md).
+
 ## Documentation
 
 For detailed documentation, troubleshooting, and advanced usage, see:
 
 - **[Full Documentation](docs/README_FULL.md)** - Complete guide with troubleshooting
+- **[AC Wrapper Integration](docs/AC_WRAPPER_INTEGRATION.md)** - Content Manager car pack downloads
 - **[Contributing Guide](CONTRIBUTING.md)** - How to contribute
 - **[Examples](EXAMPLES.md)** - Usage examples and recipes
 
