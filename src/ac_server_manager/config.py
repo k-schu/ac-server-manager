@@ -28,6 +28,10 @@ class ServerConfig:
     server_name: str = "AC Server"
     max_players: int = 8
 
+    # AC Server Wrapper Configuration (optional)
+    enable_wrapper: bool = False  # Enable ac-server-wrapper for CM content downloads
+    wrapper_port: int = 8082  # Port for wrapper (only used if enable_wrapper=True)
+
     # Instance tags
     instance_name: str = "ac-server-instance"
 
