@@ -67,137 +67,6 @@ def test_get_ubuntu_ami_not_found(ec2_manager: EC2Manager) -> None:
     assert result is None
 
 
-def test_create_user_data_script(ec2_manager: EC2Manager) -> None:
-    """Test user data script creation."""
-    script = ec2_manager.create_user_data_script("test-bucket", "packs/test.tar.gz")
-
-    # Basic script structure
-    assert "#!/bin/bash" in script
-    assert "set -euo pipefail" in script
-
-    # Required packages installation
-    assert "awscli" in script
-    assert "unzip" in script
-    assert "wget" in script
-    assert "tar" in script
-    assert "jq" in script
-    assert "lib32gcc-s1" in script
-    assert "lib32stdc++6" in script
-    assert "iproute2" in script or "net-tools" in script
-
-    # S3 download with retries
-    assert "aws s3 cp s3://test-bucket/packs/test.tar.gz" in script
-    assert "MAX_RETRIES" in script
-    assert "RETRY_DELAY" in script
-
-    # Pack extraction and verification
-    assert "tar -xzf server-pack.tar.gz" in script
-
-    # Binary location and verification
-    assert "find /opt/acserver" in script
-    assert "acServer" in script or "acserver" in script
-    assert "file" in script  # file command to check binary type
-    assert "ELF" in script
-    assert "PE32" in script or "Windows" in script  # Check for Windows binary detection
-
-    # Binary permissions - now uses variable
-    assert "chmod +x" in script
-    assert "chown root:root" in script
-
-    # ldd check for dependencies
-    assert "ldd" in script
-
-    # Systemd service creation with dynamic path
-    assert "systemctl daemon-reload" in script
-    assert "systemctl enable acserver" in script
-    assert "systemctl start acserver" in script
-    assert "/etc/systemd/system/acserver.service" in script
-    assert "WorkingDirectory=" in script
-    assert "ExecStart=" in script
-
-    # Validation timeout
-    assert "VALIDATION_TIMEOUT" in script
-
-    # Process validation
-    assert "pgrep" in script
-
-    # Port validation with both ss and netstat fallback
-    assert "ss -tlnp" in script or "netstat -tlnp" in script
-    assert "ss -ulnp" in script or "netstat -ulnp" in script
-
-    # Port constants and usage
-    assert "AC_SERVER_TCP_PORT=9600" in script
-    assert "AC_SERVER_UDP_PORT=9600" in script
-    assert "AC_SERVER_HTTP_PORT=8081" in script
-    # Ports are now referenced via variables
-    assert "$AC_SERVER_TCP_PORT" in script
-    assert "$AC_SERVER_UDP_PORT" in script
-    assert "$AC_SERVER_HTTP_PORT" in script
-
-    # HTTP endpoint check
-    assert "curl" in script
-    assert "http://127.0.0.1" in script
-
-    # Public IP retrieval
-    assert "169.254.169.254/latest/meta-data/public-ipv4" in script
-
-    # acstuff join link
-    assert "acstuff" in script
-
-    # Log validation - common error patterns
-    assert "track not found" in script
-    assert "content not found" in script
-    assert "missing track" in script
-    assert "failed to bind" in script
-    assert "port.*in use" in script
-    assert "address already in use" in script
-    assert "permission denied" in script
-    assert "segmentation fault" in script
-
-    # Status file
-    assert "/opt/acserver/deploy-status.json" in script
-    assert "STATUS_FILE" in script
-    assert "write_status" in script
-    assert '"success":' in script
-    assert '"timestamp":' in script
-    assert '"public_ip":' in script
-    assert '"error_messages":' in script
-
-    # Deployment log
-    assert "/var/log/acserver-deploy.log" in script
-    assert "DEPLOY_LOG" in script
-    assert "log_message" in script
-
-    # Exit codes
-    assert "exit 1" in script  # Failure case
-    assert "exit 0" in script  # Success case
-    assert "VALIDATION FAILED" in script
-    assert "VALIDATION PASSED" in script
-
-    # Error tracking
-    assert "ERROR_MESSAGES" in script
-    assert "add_error" in script
-
-    # Content.json patching script with local cm_content copying (PATCH_CONTENT_JSON marker)
-    assert "PATCH_CONTENT_JSON" in script
-    assert "Patching content.json files to work with ac-server-wrapper" in script
-    assert "python3 << 'PYTHON_CONTENT_PATCHER'" in script
-    assert "is_windows_absolute_path" in script
-    assert "fix_windows_path_local" in script or "copy_file_to_cm_content" in script
-    assert "shutil.copy2" in script
-    assert "patch_content_json_file" in script
-    assert "PYTHON_CONTENT_PATCHER" in script
-    assert "cm_content" in script
-    assert ".bak" in script  # Backup files
-    # Verify the patching runs after extraction but before server start
-    extraction_idx = script.find("tar -xzf server-pack.tar.gz")
-    patching_idx = script.find("Patching content.json files to work with ac-server-wrapper")
-    service_start_idx = script.find("systemctl start acserver")
-    assert (
-        extraction_idx < patching_idx < service_start_idx
-    ), "Content.json patching must run after extraction and before service start"
-
-
 def test_launch_instance_success(ec2_manager: EC2Manager) -> None:
     """Test successful instance launch."""
     ec2_manager.ec2_client.run_instances = MagicMock(
@@ -561,111 +430,58 @@ def test_create_minimal_user_data_size_is_under_16kb(ec2_manager: EC2Manager) ->
     assert size < 2000, f"Minimal user data should be well under 16KB, got {size} bytes"
 
 
-def test_create_user_data_script_local_content_json_patching(ec2_manager: EC2Manager) -> None:
-    """Test that user data script includes local cm_content patching for content.json."""
-    s3_bucket = "test-bucket"
-    s3_key = "packs/my-server-pack-v1.2.tar.gz"
 
-    script = ec2_manager.create_user_data_script(s3_bucket, s3_key)
 
-    # Verify PACK_ID is derived and set (S3_BUCKET no longer needed)
-    assert "export PACK_ID=" in script
-    # PACK_ID should be sanitized version of filename
-    assert "my-server-pack-v1_2" in script or "my_server_pack_v1_2" in script
+def test_create_assettoserver_native_user_data_script(ec2_manager: EC2Manager) -> None:
+    """Test AssettoServer native binary user data script creation."""
+    script = ec2_manager.create_assettoserver_native_user_data_script(
+        "test-bucket", "packs/test.tar.gz", "v0.0.55-pre31"
+    )
 
-    # Verify python3 is installed (but not pip/boto3)
+    # Basic script structure
+    assert "#!/bin/bash" in script
+    assert "set -euo pipefail" in script
+    
+    # Deployment logging
+    assert "DEPLOY_LOG=\"/var/log/assettoserver-deploy.log\"" in script
+    assert "STATUS_FILE=\"/opt/assettoserver/deploy-status.json\"" in script
+    
+    # Dependencies (no Docker!)
+    assert "apt-get install" in script
+    assert "awscli" in script
     assert "python3" in script
-    assert "python3-pip" not in script
-    assert "boto3" not in script
-
-    # Verify Python content patcher script is embedded with PATCH_CONTENT_JSON marker
-    assert "PATCH_CONTENT_JSON" in script
-    assert "PYTHON_CONTENT_PATCHER" in script
-    assert "Patching content.json files to work with ac-server-wrapper" in script
-
-    # Verify shutil import and usage for local file copying
-    assert "import shutil" in script
-    assert "shutil.copy2" in script
-
-    # Verify local file operations (no S3 upload)
-    assert "copy_file_to_cm_content" in script
-    assert "fix_windows_path_local" in script
-    assert "cm_content" in script
-    assert "preset" in script  # Check for preset directory
-
-    # Verify backup creation
-    assert ".bak" in script
-
-    # Verify Windows path detection
-    assert "is_windows_absolute_path" in script
-    assert "[a-zA-Z]:[/\\\\]" in script  # Drive letter pattern
-
-    # Verify content.json file processing
-    assert "content.json" in script
-    assert "patch_content_json_file" in script
-
-    # Verify environment variable usage in Python script (only PACK_ID now)
-    assert "os.environ.get('PACK_ID')" in script
-
-    # Verify no S3 operations
-    assert "upload_file" not in script
-    assert "generate_presigned_url" not in script
-    assert "boto3.client('s3')" not in script
-
-    # Verify 'file' vs 'url' field handling
-    assert "key == 'file'" in script
-
-    # Verify wrapper port adjustment
-    assert "adjust_wrapper_port" in script
-    assert "cm_wrapper_params.json" in script
-
-    # Verify patching happens after extraction but before server start
-    extraction_idx = script.find("tar -xzf server-pack.tar.gz")
-    patching_idx = script.find("Patching content.json files to work with ac-server-wrapper")
-    server_start_idx = script.find("systemctl start acserver")
-
-    assert extraction_idx > 0, "Extraction command not found"
-    assert patching_idx > 0, "Patching command not found"
-    assert server_start_idx > 0, "Server start command not found"
-    assert (
-        extraction_idx < patching_idx < server_start_idx
-    ), "Content.json patching must run after extraction and before server start"
-
-
-def test_create_user_data_script_pack_id_sanitization(ec2_manager: EC2Manager) -> None:
-    """Test that PACK_ID is properly sanitized from various S3 key formats."""
-    test_cases = [
-        ("packs/simple.tar.gz", "simple"),
-        ("packs/with-dashes.tar.gz", "with-dashes"),
-        ("packs/with_underscores.tar.gz", "with_underscores"),
-        ("nested/path/to/pack.tar.gz", "pack"),
-        ("packs/special!@#chars.tar.gz", "special___chars"),
-        ("packs/version-1.2.3.tar.gz", "version-1_2_3"),
-        ("packs/pack.zip", "pack"),
-    ]
-
-    for s3_key, expected_sanitized in test_cases:
-        script = ec2_manager.create_user_data_script("test-bucket", s3_key)
-
-        # Check that PACK_ID is set
-        assert "export PACK_ID=" in script
-
-        # Extract the PACK_ID value from the script
-        import re
-
-        pack_id_match = re.search(r'export PACK_ID="([^"]+)"', script)
-        assert pack_id_match is not None, f"PACK_ID not found in script for key: {s3_key}"
-
-        pack_id = pack_id_match.group(1)
-
-        # Verify it's properly sanitized (only alphanumeric, dashes, underscores)
-        assert re.match(
-            r"^[a-zA-Z0-9_-]+$", pack_id
-        ), f"PACK_ID '{pack_id}' contains invalid characters for key: {s3_key}"
-
-        # Verify it matches expected pattern (exact match or close enough)
-        assert (
-            expected_sanitized in pack_id
-            or pack_id in expected_sanitized
-            or pack_id == expected_sanitized
-        ), f"PACK_ID '{pack_id}' doesn't match expected '{expected_sanitized}' for key: {s3_key}"
+    assert "wget" in script
+    assert "tar" in script
+    assert "docker" not in script.lower() or "docker" not in script  # Should not install Docker
+    
+    # S3 download
+    assert "aws s3 cp s3://test-bucket/packs/test.tar.gz" in script
+    assert "MAX_RETRIES" in script
+    
+    # AssettoServer binary download from GitHub
+    assert "https://github.com/compujuckel/AssettoServer/releases/download/v0.0.55-pre31/assetto-server-linux-x64.tar.gz" in script
+    assert "wget" in script
+    
+    # Binary extraction and setup
+    assert "tar -xzf assettoserver-binary.tar.gz" in script
+    assert "chmod +x AssettoServer" in script
+    
+    # Preparation tool
+    assert "assetto_server_prepare.py" in script
+    assert "python3 ./assetto_server_prepare.py" in script
+    
+    # Systemd service (not Docker)
+    assert "/etc/systemd/system/assettoserver.service" in script
+    assert "systemctl daemon-reload" in script
+    assert "systemctl enable assettoserver" in script
+    assert "systemctl start assettoserver" in script
+    assert "WorkingDirectory=/opt/assettoserver" in script
+    assert "ExecStart=/opt/assettoserver/AssettoServer" in script
+    
+    # No Docker Compose
+    assert "docker-compose" not in script
+    assert "docker compose" not in script
+    
+    # Status checks
+    assert "systemctl is-active" in script
+    assert "write_status" in script
