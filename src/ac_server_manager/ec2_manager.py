@@ -235,36 +235,60 @@ else
 fi
 
 # Locate the server executable
-log_message "Locating acServer executable..."
+log_message "Locating acServer or acServerWrapper executable..."
 ACSERVER_PATH=""
+ACSERVER_WRAPPER_PATH=""
 
-# Search for acServer binary - check common locations first
-if [ -f "./acServer" ] && [ -x "./acServer" ]; then
-    ACSERVER_PATH="./acServer"
-elif [ -f "./acServer" ]; then
-    ACSERVER_PATH="./acServer"
-else
-    # Search in subdirectories
-    FOUND_BINARIES=$(find /opt/acserver -maxdepth 3 -type f \\( -name "acServer*" -o -name "acserver*" \\) 2>/dev/null || true)
+# Search for acServerWrapper first (preferred) - check common locations in order
+for location in "." "bin" "build"; do
+    if [ -f "./$location/acServerWrapper" ]; then
+        ACSERVER_WRAPPER_PATH="./$location/acServerWrapper"
+        log_message "Found acServerWrapper at: $ACSERVER_WRAPPER_PATH"
+        break
+    fi
+done
+
+# If acServerWrapper not found, search for acServer in common locations
+if [ -z "$ACSERVER_WRAPPER_PATH" ]; then
+    log_message "acServerWrapper not found, searching for acServer..."
+    for location in "." "bin" "build"; do
+        if [ -f "./$location/acServer" ]; then
+            ACSERVER_PATH="./$location/acServer"
+            log_message "Found acServer at: $ACSERVER_PATH"
+            break
+        fi
+    done
     
-    if [ -n "$FOUND_BINARIES" ]; then
-        # Prefer executables
-        for binary in $FOUND_BINARIES; do
-            if [ -x "$binary" ]; then
-                ACSERVER_PATH="$binary"
-                break
-            fi
-        done
+    # If still not found, do a broader search
+    if [ -z "$ACSERVER_PATH" ]; then
+        FOUND_BINARIES=$(find /opt/acserver -maxdepth 3 -type f \\( -name "acServer*" -o -name "acserver*" \\) 2>/dev/null || true)
         
-        # If no executable found, take first match
-        if [ -z "$ACSERVER_PATH" ]; then
-            ACSERVER_PATH=$(echo "$FOUND_BINARIES" | head -1)
+        if [ -n "$FOUND_BINARIES" ]; then
+            # Prefer executables
+            for binary in $FOUND_BINARIES; do
+                if [ -x "$binary" ]; then
+                    ACSERVER_PATH="$binary"
+                    break
+                fi
+            done
+            
+            # If no executable found, take first match
+            if [ -z "$ACSERVER_PATH" ]; then
+                ACSERVER_PATH=$(echo "$FOUND_BINARIES" | head -1)
+            fi
         fi
     fi
 fi
 
-if [ -z "$ACSERVER_PATH" ]; then
-    add_error "No acServer binary found in extracted pack"
+# Set the final binary path (prefer wrapper)
+if [ -n "$ACSERVER_WRAPPER_PATH" ]; then
+    ACSERVER_PATH="$ACSERVER_WRAPPER_PATH"
+    log_message "Using acServerWrapper"
+elif [ -n "$ACSERVER_PATH" ]; then
+    log_message "Using acServer (acServerWrapper not found)"
+else
+    add_error "No acServer or acServerWrapper binary found in extracted pack"
+    add_error "Searched locations: ./, ./bin/, ./build/, and subdirectories"
     PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4 || echo "unknown")
     write_status false "$PUBLIC_IP"
     exit 1
