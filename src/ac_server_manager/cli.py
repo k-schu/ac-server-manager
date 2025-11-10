@@ -178,25 +178,9 @@ def main() -> None:
     help="IAM instance profile name to create (used with --create-iam)",
 )
 @click.option(
-    "--enable-wrapper/--no-enable-wrapper",
-    default=True,
-    help="Enable ac-server-wrapper for CM content downloads (default: on)",
-)
-@click.option(
-    "--wrapper-port",
-    type=int,
-    default=8082,
-    help="Port for ac-server-wrapper (default: 8082, must differ from AC HTTP port 8081)",
-)
-@click.option(
-    "--use-assettoserver/--no-use-assettoserver",
-    default=False,
-    help="Use AssettoServer instead of default AC server (default: off)",
-)
-@click.option(
     "--assettoserver-version",
-    default="v0.0.54",
-    help="AssettoServer Docker image version (default: v0.0.54)",
+    default="v0.0.55-pre31",
+    help="AssettoServer release version (default: v0.0.55-pre31)",
 )
 def deploy(
     pack_file: Path,
@@ -209,12 +193,9 @@ def deploy(
     create_iam: bool,
     iam_role_name: Optional[str],
     iam_instance_profile_name: Optional[str],
-    enable_wrapper: bool,
-    wrapper_port: int,
-    use_assettoserver: bool,
     assettoserver_version: str,
 ) -> None:
-    """Deploy AC server from a Content Manager pack file.
+    """Deploy AssettoServer from a Content Manager pack file.
 
     PACK_FILE: Path to the server pack .tar.gz file exported from Content Manager
 
@@ -223,7 +204,7 @@ def deploy(
         ac-server-manager deploy my-server-pack.tar.gz --region us-west-2 --key-name my-key
         ac-server-manager deploy my-server-pack.tar.gz --create-iam
         ac-server-manager deploy my-server-pack.tar.gz --iam-instance-profile my-profile
-        ac-server-manager deploy my-server-pack.tar.gz --use-assettoserver
+        ac-server-manager deploy my-server-pack.tar.gz --assettoserver-version v0.0.55-pre30
     """
     config = ServerConfig(
         aws_region=region,
@@ -235,9 +216,6 @@ def deploy(
         auto_create_iam=create_iam,
         iam_role_name=iam_role_name,
         iam_instance_profile_name=iam_instance_profile_name,
-        enable_wrapper=enable_wrapper,
-        wrapper_port=wrapper_port,
-        use_assettoserver=use_assettoserver,
         assettoserver_version=assettoserver_version,
     )
 
@@ -526,15 +504,9 @@ def terminate_all(
     help="IAM instance profile name to create (used with --create-iam)",
 )
 @click.option(
-    "--enable-wrapper/--no-enable-wrapper",
-    default=True,
-    help="Enable ac-server-wrapper for CM content downloads (default: on)",
-)
-@click.option(
-    "--wrapper-port",
-    type=int,
-    default=8082,
-    help="Port for ac-server-wrapper (default: 8082, must differ from AC HTTP port 8081)",
+    "--assettoserver-version",
+    default="v0.0.55-pre31",
+    help="AssettoServer release version (default: v0.0.55-pre31)",
 )
 def redeploy(
     pack_file: Path,
@@ -548,8 +520,7 @@ def redeploy(
     create_iam: bool,
     iam_role_name: Optional[str],
     iam_instance_profile_name: Optional[str],
-    enable_wrapper: bool,
-    wrapper_port: int,
+    assettoserver_version: str,
 ) -> None:
     """Terminate existing instance and redeploy with new pack.
 
@@ -569,8 +540,7 @@ def redeploy(
         auto_create_iam=create_iam,
         iam_role_name=iam_role_name,
         iam_instance_profile_name=iam_instance_profile_name,
-        enable_wrapper=enable_wrapper,
-        wrapper_port=wrapper_port,
+        assettoserver_version=assettoserver_version,
     )
 
     deployer = Deployer(config)

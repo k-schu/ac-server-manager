@@ -1332,3 +1332,186 @@ else
 fi
 """
         return script
+
+    def create_assettoserver_native_user_data_script(
+        self, s3_bucket: str, s3_key: str, assettoserver_version: str = "v0.0.55-pre31"
+    ) -> str:
+        """Create user data script for AssettoServer native binary deployment.
+
+        Args:
+            s3_bucket: S3 bucket containing the pack file
+            s3_key: S3 key of the pack file
+            assettoserver_version: AssettoServer release version
+
+        Returns:
+            User data script as string
+        """
+        import re
+
+        pack_id = re.sub(
+            r"[^a-zA-Z0-9-_]", "_", s3_key.split("/")[-1].replace(".tar.gz", "").replace(".zip", "")
+        )
+
+        script = f"""#!/bin/bash
+set -euo pipefail
+
+# Logging setup
+DEPLOY_LOG="/var/log/assettoserver-deploy.log"
+STATUS_FILE="/opt/assettoserver/deploy-status.json"
+exec > >(tee -a "$DEPLOY_LOG") 2>&1
+
+log_message() {{
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+}}
+
+write_status() {{
+    local status=$1
+    local detail=${{2:-""}}
+    local timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    local public_ip=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4 || echo "unknown")
+    
+    mkdir -p /opt/assettoserver
+    cat > "$STATUS_FILE" << STATUSEOF
+{{
+  "status": "$status",
+  "detail": "$detail",
+  "timestamp": "$timestamp",
+  "server_ip": "$public_ip",
+  "server_port": {AC_SERVER_UDP_PORT},
+  "tcp_port": {AC_SERVER_TCP_PORT},
+  "http_port": {AC_SERVER_HTTP_PORT},
+  "assettoserver_version": "{assettoserver_version}",
+  "pack_id": "{pack_id}"
+}}
+STATUSEOF
+}}
+
+log_message "=== AssettoServer Native Binary Deployment Started ==="
+log_message "Pack: {s3_key}"
+log_message "AssettoServer Version: {assettoserver_version}"
+
+# Install dependencies
+log_message "Installing dependencies..."
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq
+apt-get install -y -qq ca-certificates curl awscli python3 wget tar
+
+log_message "✓ Dependencies installed"
+
+# Create AssettoServer directory
+ASSETTOSERVER_DIR="/opt/assettoserver"
+mkdir -p "$ASSETTOSERVER_DIR"
+cd "$ASSETTOSERVER_DIR"
+
+# Download server pack from S3 with retries
+log_message "Downloading server pack from S3..."
+MAX_RETRIES=3
+RETRY_DELAY=5
+for attempt in $(seq 1 $MAX_RETRIES); do
+    if aws s3 cp s3://{s3_bucket}/{s3_key} ./server-pack.tar.gz; then
+        log_message "✓ Download successful"
+        break
+    else
+        if [ $attempt -eq $MAX_RETRIES ]; then
+            log_message "ERROR: Failed to download pack from S3 after $MAX_RETRIES attempts"
+            write_status "failed" "Failed to download pack from S3"
+            exit 1
+        fi
+        log_message "Download attempt $attempt failed, retrying in $RETRY_DELAY seconds..."
+        sleep $RETRY_DELAY
+        RETRY_DELAY=$((RETRY_DELAY * 2))
+    fi
+done
+
+# Download AssettoServer Linux binary
+log_message "Downloading AssettoServer binary..."
+BINARY_URL="https://github.com/compujuckel/AssettoServer/releases/download/{assettoserver_version}/assetto-server-linux-x64.tar.gz"
+if ! wget -q "$BINARY_URL" -O assettoserver-binary.tar.gz; then
+    log_message "ERROR: Failed to download AssettoServer binary from $BINARY_URL"
+    write_status "failed" "Failed to download AssettoServer binary"
+    exit 1
+fi
+log_message "✓ Binary downloaded"
+
+# Extract AssettoServer binary
+log_message "Extracting AssettoServer binary..."
+tar -xzf assettoserver-binary.tar.gz
+rm assettoserver-binary.tar.gz
+log_message "✓ Binary extracted"
+
+# Make AssettoServer executable
+chmod +x AssettoServer
+log_message "✓ AssettoServer binary is ready"
+
+# Download and run the preparation tool
+log_message "Downloading AssettoServer preparation tool..."
+if ! aws s3 cp s3://{s3_bucket}/tools/assetto_server_prepare.py ./assetto_server_prepare.py; then
+    log_message "ERROR: Failed to download preparation tool"
+    write_status "failed" "Failed to download preparation tool"
+    exit 1
+fi
+chmod +x ./assetto_server_prepare.py
+
+# Prepare server data
+log_message "Preparing server configuration..."
+if ! python3 ./assetto_server_prepare.py ./server-pack.tar.gz "$ASSETTOSERVER_DIR"; then
+    log_message "ERROR: Failed to prepare server data"
+    write_status "failed" "Failed to prepare server data structure"
+    exit 1
+fi
+log_message "✓ Server data prepared"
+
+# Create systemd service
+log_message "Creating systemd service..."
+cat > /etc/systemd/system/assettoserver.service << 'EOF'
+[Unit]
+Description=AssettoServer
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/assettoserver
+ExecStart=/opt/assettoserver/AssettoServer
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:/var/log/assettoserver-stdout.log
+StandardError=append:/var/log/assettoserver-stderr.log
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+log_message "✓ Systemd service created"
+
+# Start AssettoServer
+log_message "Starting AssettoServer..."
+systemctl daemon-reload
+systemctl enable assettoserver
+systemctl start assettoserver
+
+# Wait for server to start
+log_message "Waiting for server to start..."
+sleep 10
+
+# Check if service is running
+if systemctl is-active --quiet assettoserver; then
+    log_message "✓ AssettoServer is running"
+    write_status "started" "AssettoServer deployment successful"
+    
+    log_message "=== Deployment Complete ==="
+    PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4 || echo "unknown")
+    log_message "Server available at $PUBLIC_IP:{AC_SERVER_UDP_PORT} (UDP)"
+    log_message "HTTP interface at http://$PUBLIC_IP:{AC_SERVER_HTTP_PORT}"
+    log_message "Status file: $STATUS_FILE"
+else
+    log_message "ERROR: AssettoServer failed to start"
+    log_message "Service status:"
+    systemctl status assettoserver --no-pager
+    log_message "Recent logs:"
+    journalctl -u assettoserver -n 50 --no-pager
+    write_status "failed" "AssettoServer failed to start"
+    exit 1
+fi
+"""
+        return script

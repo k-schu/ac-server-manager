@@ -72,12 +72,10 @@ class Deployer:
                 )
                 return None
 
-        # Step 4: Create security group
-        extra_ports = [self.config.wrapper_port] if self.config.enable_wrapper else None
+        # Step 4: Create security group (no extra ports needed - AssettoServer handles all on standard ports)
         security_group_id = self.ec2_manager.create_security_group(
             self.config.security_group_name,
-            "Security group for Assetto Corsa server",
-            extra_ports=extra_ports,
+            "Security group for AssettoServer",
         )
         if not security_group_id:
             logger.error("Failed to create security group")
@@ -89,37 +87,28 @@ class Deployer:
             logger.error("Failed to get Ubuntu AMI")
             return None
 
-        # Step 6: Create bootstrap script (AssettoServer or traditional)
-        if self.config.use_assettoserver:
-            logger.info("Using AssettoServer deployment approach")
+        # Step 6: Create bootstrap script for AssettoServer native binary deployment
+        logger.info("Using AssettoServer native binary deployment")
 
-            # Upload preparation tool to S3 first
-            prep_tool_path = (
-                Path(__file__).parent.parent.parent / "tools" / "assetto_server_prepare.py"
-            )
-            if prep_tool_path.exists():
-                prep_tool_key = "tools/assetto_server_prepare.py"
-                with open(prep_tool_path, "rb") as f:
-                    self.s3_manager.upload_bytes(prep_tool_key, f.read())
-                logger.info(
-                    f"Uploaded preparation tool to s3://{self.config.s3_bucket_name}/{prep_tool_key}"
-                )
-            else:
-                logger.warning(f"Preparation tool not found at {prep_tool_path}")
-
-            bootstrap_script = self.ec2_manager.create_assettoserver_user_data_script(
-                self.config.s3_bucket_name,
-                s3_key,
-                assettoserver_version=self.config.assettoserver_version,
+        # Upload preparation tool to S3 first
+        prep_tool_path = (
+            Path(__file__).parent.parent.parent / "tools" / "assetto_server_prepare.py"
+        )
+        if prep_tool_path.exists():
+            prep_tool_key = "tools/assetto_server_prepare.py"
+            with open(prep_tool_path, "rb") as f:
+                self.s3_manager.upload_bytes(prep_tool_key, f.read())
+            logger.info(
+                f"Uploaded preparation tool to s3://{self.config.s3_bucket_name}/{prep_tool_key}"
             )
         else:
-            logger.info("Using traditional AC server deployment approach")
-            bootstrap_script = self.ec2_manager.create_user_data_script(
-                self.config.s3_bucket_name,
-                s3_key,
-                enable_wrapper=self.config.enable_wrapper,
-                wrapper_port=self.config.wrapper_port,
-            )
+            logger.warning(f"Preparation tool not found at {prep_tool_path}")
+
+        bootstrap_script = self.ec2_manager.create_assettoserver_native_user_data_script(
+            self.config.s3_bucket_name,
+            s3_key,
+            assettoserver_version=self.config.assettoserver_version,
+        )
 
         # Step 7: Upload bootstrap script to S3 and get presigned URL
         upload_result = self.ec2_manager.upload_bootstrap_to_s3(self.s3_manager, bootstrap_script)
@@ -160,17 +149,18 @@ class Deployer:
         # Step 8: Get public IP
         public_ip = self.ec2_manager.get_instance_public_ip(instance_id)
         if public_ip:
-            logger.info("AC server deployed successfully!")
+            logger.info("AssettoServer deployed successfully!")
             logger.info(f"Instance ID: {instance_id}")
             logger.info(f"Public IP: {public_ip}")
             logger.info(f"Server will be available at {public_ip}:9600 (UDP/TCP)")
+            logger.info(f"HTTP interface: http://{public_ip}:8081")
             logger.info("")
             logger.info("Post-deployment validation is running on the instance...")
             logger.info("This may take 2-3 minutes. To check deployment status:")
             logger.info(f"  1. SSH to instance: ssh -i <key>.pem ubuntu@{public_ip}")
-            logger.info("  2. Check status: cat /opt/acserver/deploy-status.json")
-            logger.info("  3. Check logs: cat /var/log/acserver-deploy.log")
-            logger.info("  4. Check service: systemctl status acserver")
+            logger.info("  2. Check status: cat /opt/assettoserver/deploy-status.json")
+            logger.info("  3. Check logs: cat /var/log/assettoserver-deploy.log")
+            logger.info("  4. Check service: systemctl status assettoserver")
             logger.info("")
             logger.info("If validation fails, check the logs above for troubleshooting.")
 
