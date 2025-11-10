@@ -69,6 +69,14 @@ class EC2Manager:
                     },
                     {
                         "IpProtocol": "tcp",
+                        "FromPort": 80,
+                        "ToPort": 80,
+                        "IpRanges": [
+                            {"CidrIp": "0.0.0.0/0", "Description": "AC Server Wrapper (HTTP)"}
+                        ],
+                    },
+                    {
+                        "IpProtocol": "tcp",
                         "FromPort": AC_SERVER_HTTP_PORT,
                         "ToPort": AC_SERVER_HTTP_PORT,
                         "IpRanges": [{"CidrIp": "0.0.0.0/0", "Description": "AC HTTP"}],
@@ -89,7 +97,9 @@ class EC2Manager:
                         "IpProtocol": "tcp",
                         "FromPort": AC_SERVER_WRAPPER_PORT,
                         "ToPort": AC_SERVER_WRAPPER_PORT,
-                        "IpRanges": [{"CidrIp": "0.0.0.0/0", "Description": "AC Server Wrapper"}],
+                        "IpRanges": [
+                            {"CidrIp": "0.0.0.0/0", "Description": "AC Server Wrapper (Alt)"}
+                        ],
                     },
                 ],
             )
@@ -474,34 +484,10 @@ PYEOF
     fi
     
     if [ -n "$WRAPPER_PARAMS" ]; then
-        log_message "Found cm_wrapper_params.json in pack, copying to preset directory"
+        log_message "Found cm_wrapper_params.json in pack, using it as-is"
         cp "$WRAPPER_PARAMS" "$PRESET_DIR/cm_wrapper_params.json"
-        
-        # Update port in the params file to match our configuration
-        log_message "Updating wrapper port to $AC_SERVER_WRAPPER_PORT"
-        python3 << PYEOF
-import json
-import sys
-
-params_path = "$PRESET_DIR/cm_wrapper_params.json"
-
-try:
-    with open(params_path, 'r') as f:
-        params = json.load(f)
-    
-    # Update port to our configured wrapper port
-    params['port'] = $AC_SERVER_WRAPPER_PORT
-    
-    with open(params_path, 'w') as f:
-        json.dump(params, f, indent=2)
-    
-    print(f"Updated wrapper port to $AC_SERVER_WRAPPER_PORT")
-except Exception as ex:
-    print(f"Error updating cm_wrapper_params.json: {{ex}}", file=sys.stderr)
-    sys.exit(1)
-PYEOF
     else
-        log_message "Creating default cm_wrapper_params.json"
+        log_message "Creating default cm_wrapper_params.json with port $AC_SERVER_WRAPPER_PORT"
         cat > "$PRESET_DIR/cm_wrapper_params.json" << EOFPARAMS
 {{
   "port": $AC_SERVER_WRAPPER_PORT,
