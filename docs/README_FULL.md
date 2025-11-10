@@ -162,7 +162,7 @@ The server will be deployed and available at the public IP address shown in the 
 
 ### AC Server Wrapper for Content Manager
 
-You can optionally enable the ac-server-wrapper, which allows Content Manager to download missing content (cars, tracks) directly from the server. This is useful for servers with custom content.
+You can optionally enable the ac-server-wrapper, which allows Content Manager to download missing content (cars, tracks, skins, weather) directly from the server. This is useful for servers with custom content and enables the "Install Missing Files" feature in Content Manager.
 
 ```bash
 ac-server-manager deploy server-pack.tar.gz --enable-wrapper
@@ -180,8 +180,21 @@ ac-server-manager deploy server-pack.tar.gz \
 - Installs Node.js 20 on the server
 - Sets up ac-server-wrapper as a systemd service
 - Opens the wrapper port in the security group (default: 8082)
-- Enables automatic content downloads in Content Manager
+- **Automatically generates content.json with downloadable content**
+- **Creates .zip archives for all cars, tracks, skins, and weather**
+- Enables automatic content downloads in Content Manager's "Install Missing Files" feature
 - Runs in the background without blocking server startup
+
+**Enhanced Content Manager Integration:**
+
+The deployment now automatically:
+1. **Scans your server pack** for all cars, tracks, skins, and weather
+2. **Creates .zip archives** for each content item in the `cm_content` directory
+3. **Generates content.json** with proper structure referencing all downloadable content
+4. **Extracts version information** from `ui_car.json` and `ui_track.json` when available
+5. **Enables "Install Missing Files"** in Content Manager for seamless client setup
+
+This means players using Content Manager can easily join your server and automatically download any missing content without manual intervention.
 
 **Note:** The wrapper installation happens asynchronously after the server starts. Check `/var/log/acserver-wrapper-install.log` for installation progress.
 

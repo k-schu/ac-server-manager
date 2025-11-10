@@ -331,6 +331,7 @@ import os
 import re
 import sys
 import shutil
+import zipfile
 from pathlib import Path
 
 def is_windows_absolute_path(s):
@@ -468,6 +469,137 @@ def patch_content_json_file(filepath, pack_root, cm_content_dir, copied_cache):
         print(f"Warning: Failed to process {{filepath}}: {{e}}", file=sys.stderr)
         return False
 
+def create_zip_file(source_dir, zip_path):
+    # Create a .zip file from a directory for ac-server-wrapper
+    try:
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for root, dirs, files in os.walk(source_dir):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    arcname = os.path.relpath(file_path, os.path.dirname(source_dir))
+                    zipf.write(file_path, arcname)
+        return True
+    except Exception as e:
+        print(f"Warning: Failed to create zip {{zip_path}}: {{e}}", file=sys.stderr)
+        return False
+
+def get_car_version(car_dir):
+    # Try to extract version from ui_car.json
+    try:
+        ui_json_path = os.path.join(car_dir, 'ui', 'ui_car.json')
+        if os.path.exists(ui_json_path):
+            with open(ui_json_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return data.get('version', '1.0')
+    except Exception:
+        pass
+    return '1.0'
+
+def get_track_version(track_dir):
+    # Try to extract version from ui_track.json
+    try:
+        ui_json_path = os.path.join(track_dir, 'ui', 'ui_track.json')
+        if os.path.exists(ui_json_path):
+            with open(ui_json_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return data.get('version', '1.0')
+    except Exception:
+        pass
+    return '1.0'
+
+def generate_content_json(pack_root, cm_content_dir, preset_dir):
+    # Generate or enhance content.json for ac-server-wrapper
+    # This enables Content Manager's "Install Missing Files" feature
+    print("Generating content.json for ac-server-wrapper...")
+    
+    content_data = {{
+        'cars': {{}},
+        'track': {{}},
+        'weather': {{}}
+    }}
+    
+    # Process cars
+    cars_dir = os.path.join(pack_root, 'content', 'cars')
+    if os.path.exists(cars_dir):
+        for car_name in os.listdir(cars_dir):
+            car_path = os.path.join(cars_dir, car_name)
+            if os.path.isdir(car_path):
+                zip_filename = f"{{car_name}}.zip"
+                zip_path = os.path.join(cm_content_dir, zip_filename)
+                
+                # Create zip file for the car
+                if create_zip_file(car_path, zip_path):
+                    version = get_car_version(car_path)
+                    content_data['cars'][car_name] = {{
+                        'version': version,
+                        'file': zip_filename
+                    }}
+                    
+                    # Process car skins
+                    skins_dir = os.path.join(car_path, 'skins')
+                    if os.path.exists(skins_dir):
+                        content_data['cars'][car_name]['skins'] = {{}}
+                        for skin_name in os.listdir(skins_dir):
+                            skin_path = os.path.join(skins_dir, skin_name)
+                            if os.path.isdir(skin_path):
+                                skin_zip_filename = f"{{car_name}}_skin_{{skin_name}}.zip"
+                                skin_zip_path = os.path.join(cm_content_dir, skin_zip_filename)
+                                if create_zip_file(skin_path, skin_zip_path):
+                                    content_data['cars'][car_name]['skins'][skin_name] = {{
+                                        'file': skin_zip_filename
+                                    }}
+                    
+                    print(f"  ✓ Packaged car: {{car_name}}")
+    
+    # Process track
+    tracks_dir = os.path.join(pack_root, 'content', 'tracks')
+    if os.path.exists(tracks_dir):
+        # AC typically has one track per server, find the first one
+        for track_name in os.listdir(tracks_dir):
+            track_path = os.path.join(tracks_dir, track_name)
+            if os.path.isdir(track_path):
+                zip_filename = f"{{track_name}}.zip"
+                zip_path = os.path.join(cm_content_dir, zip_filename)
+                
+                # Create zip file for the track
+                if create_zip_file(track_path, zip_path):
+                    version = get_track_version(track_path)
+                    content_data['track'] = {{
+                        'version': version,
+                        'file': zip_filename
+                    }}
+                    print(f"  ✓ Packaged track: {{track_name}}")
+                break  # Only one track supported per server
+    
+    # Process weather
+    weather_dir = os.path.join(pack_root, 'content', 'weather')
+    if os.path.exists(weather_dir):
+        for weather_name in os.listdir(weather_dir):
+            weather_path = os.path.join(weather_dir, weather_name)
+            if os.path.isdir(weather_path):
+                zip_filename = f"{{weather_name}}.zip"
+                zip_path = os.path.join(cm_content_dir, zip_filename)
+                
+                # Create zip file for the weather
+                if create_zip_file(weather_path, zip_path):
+                    content_data['weather'][weather_name] = {{
+                        'file': zip_filename
+                    }}
+                    print(f"  ✓ Packaged weather: {{weather_name}}")
+    
+    # Write content.json to both cm_content and preset directories
+    content_json_path = os.path.join(preset_dir, 'cm_content', 'content.json')
+    try:
+        with open(content_json_path, 'w', encoding='utf-8') as f:
+            json.dump(content_data, f, indent=2, ensure_ascii=False)
+        print(f"✓ Generated content.json with {{len(content_data.get('cars', {{}}))}}" + 
+              f" cars, {{1 if content_data.get('track') else 0}} track, " +
+              f"{{len(content_data.get('weather', {{}}))}}" + " weather types")
+        return True
+    except Exception as e:
+        print(f"Warning: Failed to write content.json: {{e}}", file=sys.stderr)
+        return False
+
 def adjust_wrapper_port():
     # Adjust cm_wrapper_params.json port from 80 to 8050 if running as non-root
     try:
@@ -518,6 +650,10 @@ def main():
                     patched_count += 1
     
     print(f"Patched {{patched_count}} content.json file(s) with {{len(copied_cache)}} files copied to cm_content")
+    
+    # Generate content.json for ac-server-wrapper to enable "Install Missing Files" in Content Manager
+    print("\\nGenerating content.json for ac-server-wrapper...")
+    generate_content_json(pack_root, cm_content_dir, preset_dir)
     
     # Adjust wrapper port if necessary
     adjust_wrapper_port()

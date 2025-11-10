@@ -10,12 +10,13 @@ Purely vibecoded automated deployment tool for Assetto Corsa dedicated servers o
 - 🔄 **Complete lifecycle** management (deploy, start, stop, terminate)
 - 🧹 **Safe teardown** with `terminate-all` command
 - 🐳 **AssettoServer support** - Deploy using AssettoServer Docker container
+- 📦 **Content Manager "Install Missing Files"** - Automatic content download support via ac-server-wrapper
 
 ## Deployment Options
 
 This tool supports two deployment approaches:
 
-1. **Traditional Assetto Corsa Server** (default) - Uses the standard AC dedicated server with optional ac-server-wrapper
+1. **Traditional Assetto Corsa Server** (default) - Uses the standard AC dedicated server with optional ac-server-wrapper that automatically packages content into downloadable .zip files and generates content.json for Content Manager's "Install Missing Files" feature
 2. **AssettoServer** - Uses the modern [AssettoServer](https://assettoserver.org/) Docker-based solution with enhanced features
 
 ### AssettoServer Benefits

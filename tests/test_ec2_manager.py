@@ -669,3 +669,44 @@ def test_create_user_data_script_pack_id_sanitization(ec2_manager: EC2Manager) -
             or pack_id in expected_sanitized
             or pack_id == expected_sanitized
         ), f"PACK_ID '{pack_id}' doesn't match expected '{expected_sanitized}' for key: {s3_key}"
+
+
+def test_create_user_data_script_includes_zip_generation(ec2_manager: EC2Manager) -> None:
+    """Test that user data script includes .zip file generation for ac-server-wrapper."""
+    s3_bucket = "test-bucket"
+    s3_key = "packs/test-pack.tar.gz"
+
+    script = ec2_manager.create_user_data_script(s3_bucket, s3_key)
+
+    # Verify zipfile import is present
+    assert "import zipfile" in script, "zipfile module should be imported"
+
+    # Verify create_zip_file function is defined
+    assert "def create_zip_file(" in script, "create_zip_file function should be defined"
+    assert "zipfile.ZIP_DEFLATED" in script, "Should use ZIP_DEFLATED compression"
+
+    # Verify generate_content_json function is defined
+    assert (
+        "def generate_content_json(" in script
+    ), "generate_content_json function should be defined"
+
+    # Verify version extraction functions
+    assert "def get_car_version(" in script, "get_car_version function should be defined"
+    assert "def get_track_version(" in script, "get_track_version function should be defined"
+    assert "ui_car.json" in script, "Should check ui_car.json for car version"
+    assert "ui_track.json" in script, "Should check ui_track.json for track version"
+
+    # Verify content structure generation (using single quotes as they are in the script)
+    assert "'cars':" in script, "Should create cars structure"
+    assert "'track':" in script, "Should create track structure"
+    assert "'weather':" in script, "Should create weather structure"
+
+    # Verify file references in content.json
+    assert "'file':" in script, "Should use 'file' references for local content"
+    assert ".zip" in script, "Should create .zip file references"
+
+    # Verify the function is called in main
+    assert "generate_content_json(" in script, "generate_content_json should be called"
+    assert (
+        "Generating content.json for ac-server-wrapper" in script
+    ), "Should log content.json generation"

@@ -1,7 +1,5 @@
 """Tests for AssettoServer EC2 deployment functionality."""
 
-
-
 from src.ac_server_manager.config import ServerConfig
 from src.ac_server_manager.ec2_manager import EC2Manager
 
