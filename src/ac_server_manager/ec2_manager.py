@@ -397,97 +397,29 @@ if [ -n "$WRAPPER_PATH" ]; then
     chown root:root "$WRAPPER_PATH"
     
     PRESET_DIR="/opt/acserver/preset"
-    mkdir -p "$PRESET_DIR/cm_content"
-    log_message "Setup preset: $PRESET_DIR"
+    mkdir -p "$PRESET_DIR/cm_content" "$PRESET_DIR/cfg"
     
-    [ -d "$WORKING_DIR/cm_content" ] && cp -r "$WORKING_DIR/cm_content" "$PRESET_DIR/" || [ -d "/opt/acserver/cm_content" ] && cp -r /opt/acserver/cm_content "$PRESET_DIR/" || true
+    [ -d "$WORKING_DIR/cm_content" ] && cp -r "$WORKING_DIR/cm_content"/* "$PRESET_DIR/cm_content/" 2>/dev/null || [ -d "/opt/acserver/cm_content" ] && cp -r /opt/acserver/cm_content/* "$PRESET_DIR/cm_content/" 2>/dev/null || true
     
     CONTENT_JSON=""
-    [ -f "$WORKING_DIR/content.json" ] && CONTENT_JSON="$WORKING_DIR/content.json" || [ -f "/opt/acserver/content.json" ] && CONTENT_JSON="/opt/acserver/content.json" || [ -f "$PRESET_DIR/cm_content/content.json" ] && CONTENT_JSON="$PRESET_DIR/cm_content/content.json" || true
+    [ -f "$WORKING_DIR/cm_content/content.json" ] && CONTENT_JSON="$WORKING_DIR/cm_content/content.json" || [ -f "/opt/acserver/cm_content/content.json" ] && CONTENT_JSON="/opt/acserver/cm_content/content.json" || [ -f "$WORKING_DIR/content.json" ] && CONTENT_JSON="$WORKING_DIR/content.json" || true
     
-    if [ -n "$CONTENT_JSON" ]; then
-        cp "$CONTENT_JSON" "$PRESET_DIR/content.json"
-        log_message "Fixing content.json paths..."
-        # Normalize file paths to be relative to the preset directory
-        # The wrapper serves files from $PRESET_DIR, and content files are in $PRESET_DIR/cm_content/
-        # Strategy: Remove absolute path prefixes and ensure paths start with cm_content/
-        
-        # Use Python for more reliable JSON path normalization
-        python3 << 'EOFPYTHON'
-import json
-import os
-import re
-
-content_json_path = "/opt/acserver/preset/content.json"
-
-try:
-    with open(content_json_path, 'r') as f:
-        data = json.load(f)
+    [ -n "$CONTENT_JSON" ] && cp "$CONTENT_JSON" "$PRESET_DIR/cm_content/content.json" && sed -i 's|[Cc]:[/\\][^"]*[/\\]||g' "$PRESET_DIR/cm_content/content.json"
     
-    # Helper function to normalize a path
-    def normalize_path(path):
-        if not isinstance(path, str):
-            return path
-        
-        # Remove Windows drive letters and convert backslashes
-        # C:\\\\path\\\\to\\\\file -> path\\\\to\\\\file
-        path = re.sub(r'^[A-Za-z]:[/\\\\\\\\]', '', path)
-        
-        # Convert all backslashes to forward slashes
-        path = path.replace('\\\\\\\\', '/')
-        
-        # Remove leading slashes
-        path = path.lstrip('/')
-        
-        # If path doesn't start with cm_content/, prepend it
-        if not path.startswith('cm_content/'):
-            # Extract just the filename if it's a full path
-            filename = os.path.basename(path)
-            path = 'cm_content/' + filename
-        
-        return path
-    
-    # Recursively process all string values in the JSON
-    def process_value(obj):
-        if isinstance(obj, dict):
-            result = {{}}
-            for k in obj:
-                result[k] = process_value(obj[k])
-            return result
-        elif isinstance(obj, list):
-            return [process_value(item) for item in obj]
-        elif isinstance(obj, str):
-            # Only normalize if it looks like a file path (contains / or \\\\\\\\ or has file extension)
-            if '/' in obj or '\\\\\\\\' in obj or re.search(r'\\\\.\\[a-zA-Z0-9]+$', obj):
-                return normalize_path(obj)
-            return obj
-        else:
-            return obj
-    
-    normalized_data = process_value(data)
-    
-    with open(content_json_path, 'w') as f:
-        json.dump(normalized_data, f, indent=2)
-    
-    print("✓ content.json normalized successfully")
-except Exception as e:
-    print("⚠ Warning: Failed to normalize content.json: " + str(e))
-EOFPYTHON
-        
-        log_message "✓ content.json fixed"
-    else
-        log_message "⚠ No content.json found"
-    fi
-    
-    # Look for existing cm_wrapper_params.json in the pack
+    # Look for existing cm_wrapper_params.json in the pack (should be in cfg folder)
     WRAPPER_PARAMS=""
-    if [ -f "$WORKING_DIR/cm_wrapper_params.json" ]; then
+    if [ -f "$WORKING_DIR/cfg/cm_wrapper_params.json" ]; then
+        WRAPPER_PARAMS="$WORKING_DIR/cfg/cm_wrapper_params.json"
+    elif [ -f "/opt/acserver/cfg/cm_wrapper_params.json" ]; then
+        WRAPPER_PARAMS="/opt/acserver/cfg/cm_wrapper_params.json"
+    elif [ -f "$WORKING_DIR/cm_wrapper_params.json" ]; then
         WRAPPER_PARAMS="$WORKING_DIR/cm_wrapper_params.json"
     elif [ -f "/opt/acserver/cm_wrapper_params.json" ]; then
         WRAPPER_PARAMS="/opt/acserver/cm_wrapper_params.json"
     fi
     
-    [ -n "$WRAPPER_PARAMS" ] && cp "$WRAPPER_PARAMS" "$PRESET_DIR/cm_wrapper_params.json" || echo "{{\\"port\\":$AC_SERVER_WRAPPER_PORT,\\"enabled\\":true}}" > "$PRESET_DIR/cm_wrapper_params.json"
+    # Copy to cfg folder (where wrapper expects it)
+    [ -n "$WRAPPER_PARAMS" ] && cp "$WRAPPER_PARAMS" "$PRESET_DIR/cfg/cm_wrapper_params.json" || echo "{{\\"port\\":$AC_SERVER_WRAPPER_PORT,\\"enabled\\":true}}" > "$PRESET_DIR/cfg/cm_wrapper_params.json"
     
     chown -R root:root "$PRESET_DIR"
     chmod -R 755 "$PRESET_DIR"
